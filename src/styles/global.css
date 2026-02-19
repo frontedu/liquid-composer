@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: #1e1e1e;
+  color: #ebebf5;
+}
+
+/* Thin macOS-style scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3a3a3c; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #636366; }
+
+/* Reset browser-native range appearance before styling the thumb */
+input[type='range'] { -webkit-appearance: none; appearance: none; }
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #0a84ff;
+  cursor: pointer;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Hide browser spin buttons on number inputs */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; }
+input[type='number'] { -moz-appearance: textfield; }
+
+input[type='color'] { -webkit-appearance: none; border: none; padding: 0; border-radius: 3px; cursor: pointer; }
+input[type='color']::-webkit-color-swatch-wrapper { padding: 0; }
+input[type='color']::-webkit-color-swatch { border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 3px; }
+
+/* Non-standard size not in Tailwind's default scale */
+.text-2xs { font-size: 10px; line-height: 1.2; }
+
+.glass-panel {
+  background: rgba(40, 40, 42, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+::selection { background: rgba(10, 132, 255, 0.3); }
+:focus-visible { outline: 2px solid #0a84ff; outline-offset: 1px; }
