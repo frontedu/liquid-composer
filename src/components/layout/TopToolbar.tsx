@@ -1,30 +1,108 @@
 import React, { useState } from 'react';
 import { useStore } from '@nanostores/react';
-import { $iconName, $iconModified, updateBackground, $background } from '../../store/iconStore';
-import { $appearanceMode, $lightAngle, $zoom, setAppearanceMode, setLightAngle, setZoom } from '../../store/uiStore';
-import type { AppearanceMode, BackgroundPreset, BackgroundConfig } from '../../types/index';
+import { $iconName, $iconModified, updateBackground, $background, setIconName, bgColorsFromHueTint } from '../../store/iconStore';
+import { $lightAngle, $zoom, setLightAngle, setZoom, ZOOM_LEVELS } from '../../store/uiStore';
 
-const ZOOM_LEVELS = [25, 50, 75, 100, 150, 200];
+// ─── Gradient slider ──────────────────────────────────────────────────────
 
-const BG_PRESETS: { id: BackgroundPreset; label: string; colors: [string, string] }[] = [
-  { id: 'warm', label: 'Warm', colors: ['#ff6b6b', '#ffd93d'] },
-  { id: 'cool', label: 'Cool', colors: ['#667eea', '#764ba2'] },
-  { id: 'forest', label: 'Forest', colors: ['#134e5e', '#71b280'] },
-  { id: 'ocean', label: 'Ocean', colors: ['#0575e6', '#021b79'] },
-  { id: 'sunset', label: 'Sunset', colors: ['#f7971e', '#ffd200'] },
-  { id: 'mono', label: 'Mono', colors: ['#2c3e50', '#bdc3c7'] },
-];
+function GradientSlider({
+  value, min, max, trackGradient, thumbColor, onChange,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  trackGradient: string;
+  thumbColor: string;
+  onChange: (v: number) => void;
+}) {
+  const pct = ((value - min) / (max - min)) * 100;
+  return (
+    <div className="relative h-5 flex items-center">
+      <div
+        className="absolute left-0 right-0 h-[10px] rounded-full"
+        style={{
+          background: trackGradient,
+          boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.4)',
+        }}
+      />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="absolute inset-0 w-full opacity-0 cursor-pointer"
+      />
+      <div
+        className="absolute top-1/2 -translate-y-1/2 w-[14px] h-[14px] rounded-full pointer-events-none"
+        style={{
+          left: `calc(${pct}% - 7px)`,
+          background: thumbColor,
+          boxShadow: '0 1px 4px rgba(0,0,0,0.5), 0 0 0 1.5px rgba(255,255,255,0.25)',
+        }}
+      />
+    </div>
+  );
+}
+
+// ─── Pill button (toolbar controls) ──────────────────────────────────────
+
+function PillButton({
+  onClick,
+  children,
+  active,
+  title,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+  active?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="flex items-center gap-1.5 px-2.5 py-[5px] rounded-[8px] text-[11px] font-medium transition-all duration-150"
+      style={
+        active
+          ? {
+              background: 'rgba(255,255,255,0.14)',
+              color: '#ffffff',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.35), inset 0 0.5px 0 rgba(255,255,255,0.20)',
+            }
+          : {
+              background: 'rgba(255,255,255,0.055)',
+              color: 'rgba(255,255,255,0.55)',
+              border: '0.5px solid rgba(255,255,255,0.09)',
+            }
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─── Component ────────────────────────────────────────────────────────────
 
 export function TopToolbar() {
-  const name = useStore($iconName);
+  const name     = useStore($iconName);
   const modified = useStore($iconModified);
-  const mode = useStore($appearanceMode);
   const lightAngle = useStore($lightAngle);
-  const zoom = useStore($zoom);
-  const [showBgPicker, setShowBgPicker] = useState(false);
-  const [showZoomMenu, setShowZoomMenu] = useState(false);
-  const [editingAngle, setEditingAngle] = useState(false);
-  const [angleInput, setAngleInput] = useState(String(lightAngle));
+  const zoom     = useStore($zoom);
+  const bg       = useStore($background);
+
+  const [showBgPicker,  setShowBgPicker]  = useState(false);
+  const [showZoomMenu,  setShowZoomMenu]  = useState(false);
+  const [editingAngle,  setEditingAngle]  = useState(false);
+  const [angleInput,    setAngleInput]    = useState(String(lightAngle));
+  const [editingName,   setEditingName]   = useState(false);
+  const [nameInput,     setNameInput]     = useState(name);
+
+  const hue  = bg.hue  ?? 220;
+  const tint = bg.tint ?? 20;
+
+  const commitName    = () => { setIconName(nameInput); setEditingName(false); };
+  const cancelName    = () => setEditingName(false);
 
   const handleAngleSubmit = () => {
     const v = parseInt(angleInput, 10);
@@ -32,80 +110,154 @@ export function TopToolbar() {
     setEditingAngle(false);
   };
 
-  const handleBgPreset = (preset: typeof BG_PRESETS[0]) => {
-    updateBackground({
-      type: 'gradient',
-      preset: preset.id,
-      colors: preset.colors,
-      angle: 135,
-    } as BackgroundConfig);
-    setShowBgPicker(false);
-  };
+  const handleHueChange  = (h: number) =>
+    updateBackground({ type: 'gradient', hue: h,    tint, colors: bgColorsFromHueTint(h,    tint), angle: 135 });
+  const handleTintChange = (t: number) =>
+    updateBackground({ type: 'gradient', hue,  tint: t, colors: bgColorsFromHueTint(hue, t),    angle: 135 });
+
+  const hueTrack  = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360]
+    .map((h) => `hsl(${h},100%,50%)`).join(', ');
+  const tintTrack    = `linear-gradient(to right, hsl(${hue},85%,50%), hsl(${hue},28%,88%))`;
+  const currentHue   = `hsl(${hue},100%,50%)`;
+  const currentTint  = `hsl(${hue},${Math.round(85 - tint * 0.55)}%,${Math.round(50 + tint * 0.38)}%)`;
+  const bgPreview    = `linear-gradient(135deg, ${bgColorsFromHueTint(hue, tint).join(', ')})`;
 
   return (
-    <div className="flex items-center h-11 bg-[#1c1c1e] border-b border-[#2c2c2e] px-3 select-none">
-      <div className="flex items-center gap-1.5 min-w-[160px]">
-        <span className="text-xs font-medium text-[#ebebf5]">{name}</span>
-        {modified && <span className="text-xs text-[#636366]">Edited</span>}
+    <div
+      className="flex items-center h-11 px-3 select-none"
+      style={{
+        background: 'rgba(22,22,24,0.82)',
+        backdropFilter: 'blur(32px) saturate(200%)',
+        WebkitBackdropFilter: 'blur(32px) saturate(200%)',
+        borderBottom: '0.5px solid rgba(255,255,255,0.07)',
+      }}
+    >
+      {/* Left — icon name */}
+      <div className="flex items-center gap-2 min-w-[160px]">
+        {editingName ? (
+          <input
+            autoFocus
+            type="text"
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter')  commitName();
+              if (e.key === 'Escape') cancelName();
+            }}
+            className="text-[11px] font-medium rounded-[6px] px-2 py-0.5 focus:outline-none w-32"
+            style={{
+              background: 'rgba(255,255,255,0.08)',
+              border: '0.5px solid rgba(10,132,255,0.8)',
+              color: '#ffffff',
+            }}
+          />
+        ) : (
+          <button
+            onDoubleClick={() => { setNameInput(name); setEditingName(true); }}
+            title="Double-click to rename"
+            className="text-[11px] font-semibold truncate max-w-[128px] cursor-text text-left"
+            style={{ color: 'rgba(255,255,255,0.80)' }}
+          >
+            {name}
+          </button>
+        )}
+        {modified && (
+          <span
+            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+            style={{ background: 'rgba(255,255,255,0.30)' }}
+            title="Unsaved changes"
+          />
+        )}
       </div>
 
-      <div className="flex-1 flex items-center justify-center gap-3">
-        <div className="flex items-center bg-[#2a2a2a] rounded-md overflow-hidden border border-[#3a3a3c]">
-          {(['default', 'dark', 'mono'] as AppearanceMode[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => setAppearanceMode(m)}
-              className={`px-3 py-1 text-xs capitalize transition-colors
-                ${mode === m ? 'bg-[#0a84ff] text-white' : 'text-[#636366] hover:text-[#ebebf5]'}`}
-            >
-              {m === 'default' ? 'Light' : m.charAt(0).toUpperCase() + m.slice(1)}
-            </button>
-          ))}
-        </div>
+      {/* Center — tools */}
+      <div className="flex-1 flex items-center justify-center gap-2">
 
+        {/* Background picker */}
         <div className="relative">
           <button
             onClick={() => setShowBgPicker(!showBgPicker)}
-            className="flex items-center gap-1.5 px-2 py-1 bg-[#2a2a2a] border border-[#3a3a3c] rounded-md hover:border-[#636366] transition-colors"
-            title="Background"
+            className="flex items-center gap-2 px-2.5 py-[5px] rounded-[8px] transition-all duration-150"
+            style={{
+              background: 'rgba(255,255,255,0.055)',
+              border: '0.5px solid rgba(255,255,255,0.09)',
+            }}
+            title="Background color"
           >
-            <svg className="w-3.5 h-3.5 text-[#636366]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
-              />
-            </svg>
-            <svg className="w-2.5 h-2.5 text-[#636366]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div
+              className="w-[18px] h-[18px] rounded-[5px] flex-shrink-0"
+              style={{
+                background: bgPreview,
+                boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.15)',
+              }}
+            />
+            <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.50)' }}>
+              Background
+            </span>
+            <svg
+              className="w-2.5 h-2.5 flex-shrink-0"
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              style={{ color: 'rgba(255,255,255,0.30)' }}
+            >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
 
           {showBgPicker && (
-            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-50 bg-[#2a2a2a] border border-[#3a3a3c] rounded-lg p-2 shadow-xl">
-              <div className="grid grid-cols-3 gap-1.5">
-                {BG_PRESETS.map((preset) => (
-                  <button
-                    key={preset.id}
-                    onClick={() => handleBgPreset(preset)}
-                    className="flex flex-col items-center gap-1 p-1.5 rounded hover:bg-[#3a3a3c] transition-colors"
-                    title={preset.label}
-                  >
-                    <div
-                      className="w-10 h-10 rounded-lg"
-                      style={{ background: `linear-gradient(135deg, ${preset.colors[0]}, ${preset.colors[1]})` }}
-                    />
-                    <span className="text-2xs text-[#636366]">{preset.label}</span>
-                  </button>
-                ))}
+            <div
+              className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 p-4 rounded-[16px] w-64 shadow-2xl"
+              style={{
+                background: 'rgba(30,30,32,0.92)',
+                backdropFilter: 'blur(40px) saturate(200%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(200%)',
+                border: '0.5px solid rgba(255,255,255,0.10)',
+                boxShadow: '0 8px 40px rgba(0,0,0,0.6), inset 0 0.5px 0 rgba(255,255,255,0.08)',
+              }}
+            >
+              <div
+                className="w-full h-10 rounded-[10px] mb-4"
+                style={{
+                  background: bgPreview,
+                  boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.12)',
+                }}
+              />
+              <div className="mb-4">
+                <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block"
+                  style={{ color: 'rgba(255,255,255,0.30)' }}>Hue</span>
+                <GradientSlider
+                  value={hue} min={0} max={360}
+                  trackGradient={`linear-gradient(to right, ${hueTrack})`}
+                  thumbColor={currentHue}
+                  onChange={handleHueChange}
+                />
+              </div>
+              <div>
+                <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block"
+                  style={{ color: 'rgba(255,255,255,0.30)' }}>Tint</span>
+                <GradientSlider
+                  value={tint} min={0} max={100}
+                  trackGradient={tintTrack}
+                  thumbColor={currentTint}
+                  onChange={handleTintChange}
+                />
               </div>
             </div>
           )}
         </div>
 
+        {/* Divider */}
+        <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.08)' }} />
+
+        {/* Light angle */}
         <div className="flex items-center gap-1.5">
-          <svg className="w-3.5 h-3.5 text-[#636366]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg
+            className="w-3.5 h-3.5 flex-shrink-0"
+            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            style={{ color: 'rgba(255,255,255,0.30)' }}
+          >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-            />
+              d="M12 3v1m0 16v1m8.66-13l-.87.5M4.21 16.5l-.87.5M20.66 16.5l-.87-.5M4.21 7.5l-.87-.5M21 12h-1M4 12H3" />
           </svg>
           {editingAngle ? (
             <input
@@ -115,37 +267,77 @@ export function TopToolbar() {
               onChange={(e) => setAngleInput(e.target.value)}
               onBlur={handleAngleSubmit}
               onKeyDown={(e) => e.key === 'Enter' && handleAngleSubmit()}
-              className="w-14 text-xs text-center bg-[#2a2a2a] border border-[#0a84ff] rounded px-1 py-0.5 text-[#ebebf5] focus:outline-none"
+              className="w-14 text-[11px] text-center focus:outline-none rounded-[6px] px-1.5 py-0.5"
+              style={{
+                background: 'rgba(255,255,255,0.08)',
+                border: '0.5px solid rgba(10,132,255,0.8)',
+                color: '#ffffff',
+              }}
             />
           ) : (
             <button
               onClick={() => { setEditingAngle(true); setAngleInput(String(lightAngle)); }}
-              className="text-xs text-[#ebebf5] hover:text-white"
+              className="text-[11px] font-medium tabular-nums"
+              style={{ color: 'rgba(255,255,255,0.55)' }}
             >
               {lightAngle}°
             </button>
           )}
         </div>
 
+        {/* Divider */}
+        <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.08)' }} />
+
+        {/* Zoom */}
         <div className="relative">
           <button
             onClick={() => setShowZoomMenu(!showZoomMenu)}
-            className="flex items-center gap-1 text-xs text-[#ebebf5] hover:text-white"
+            className="flex items-center gap-1 text-[11px] font-medium"
+            style={{ color: 'rgba(255,255,255,0.55)' }}
           >
-            {zoom}%
-            <svg className="w-2.5 h-2.5 text-[#636366]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg
+              className="w-3 h-3 flex-shrink-0"
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              style={{ color: 'rgba(255,255,255,0.30)' }}
+            >
+              <circle cx="11" cy="11" r="7" strokeWidth="1.8" />
+              <path strokeLinecap="round" strokeWidth="1.8" d="M21 21l-4-4" />
+            </svg>
+            <span className="tabular-nums">{zoom}%</span>
+            <svg
+              className="w-2 h-2"
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              style={{ color: 'rgba(255,255,255,0.25)' }}
+            >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
 
           {showZoomMenu && (
-            <div className="absolute top-full right-0 mt-1 z-50 bg-[#2a2a2a] border border-[#3a3a3c] rounded-lg py-1 shadow-xl min-w-[80px]">
+            <div
+              className="absolute top-full right-0 mt-2 z-50 py-1.5 rounded-[12px] shadow-xl min-w-[90px]"
+              style={{
+                background: 'rgba(30,30,32,0.92)',
+                backdropFilter: 'blur(40px)',
+                WebkitBackdropFilter: 'blur(40px)',
+                border: '0.5px solid rgba(255,255,255,0.10)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0.5px 0 rgba(255,255,255,0.07)',
+              }}
+            >
               {ZOOM_LEVELS.map((z) => (
                 <button
                   key={z}
                   onClick={() => { setZoom(z); setShowZoomMenu(false); }}
-                  className={`w-full text-left px-3 py-1 text-xs hover:bg-[#3a3a3c] transition-colors
-                    ${zoom === z ? 'text-[#0a84ff]' : 'text-[#ebebf5]'}`}
+                  className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors"
+                  style={{
+                    color: zoom === z ? '#0a84ff' : 'rgba(255,255,255,0.65)',
+                  }}
+                  onMouseEnter={(e) =>
+                    ((e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)')
+                  }
+                  onMouseLeave={(e) =>
+                    ((e.target as HTMLElement).style.background = 'transparent')
+                  }
                 >
                   {z}%
                 </button>
@@ -155,15 +347,22 @@ export function TopToolbar() {
         </div>
       </div>
 
+      {/* Right — Export */}
       <div className="flex items-center gap-2 min-w-[160px] justify-end">
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('icon-export'))}
-          className="px-3 py-1 text-xs bg-[#0a84ff] text-white rounded-md hover:bg-[#0070e0] transition-colors"
+          className="px-3.5 py-[5px] text-[11px] font-semibold rounded-[8px] transition-all duration-150"
+          style={{
+            background: 'linear-gradient(180deg, rgba(10,132,255,1) 0%, rgba(0,102,220,1) 100%)',
+            color: '#ffffff',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.4), inset 0 0.5px 0 rgba(255,255,255,0.25)',
+          }}
         >
           Export
         </button>
       </div>
 
+      {/* Backdrop to close dropdowns */}
       {(showBgPicker || showZoomMenu) && (
         <div
           className="fixed inset-0 z-40"

@@ -1,10 +1,9 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { useStore } from '@nanostores/react';
-import { $layers, $background } from '../../store/iconStore';
-import { $appearanceMode, $lightAngle, $zoom } from '../../store/uiStore';
+import { $layers, $background, addLayer } from '../../store/iconStore';
+import { $appearanceMode, $lightAngle, $zoom, stepZoom } from '../../store/uiStore';
 import { renderIconToCanvas, exportIconPNG } from '../../engine/IconRenderer';
 import { drawSquirclePath } from '../../engine/ImageProcessor';
-import { addLayer } from '../../store/iconStore';
 
 const ICON_BASE_SIZE = 500; // px at 100% zoom
 
@@ -114,6 +113,16 @@ export function IconCanvas() {
   }, [layers, background, lightAngle, mode, iconSize]);
 
   useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      stepZoom(e.deltaY < 0 ? 1 : -1);
+    };
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  useEffect(() => {
     const handler = async () => {
       const dataUrl = await exportIconPNG(layers, background, lightAngle, mode, 1024);
       const a = document.createElement('a');
@@ -129,12 +138,19 @@ export function IconCanvas() {
     if (mode === 'dark' || mode === 'clear-dark') {
       return { background: '#0a0a0f' };
     }
-    if (mode === 'mono') {
-      return { background: '#3a3a3c' };
+    if (mode === 'tinted-dark') {
+      return { background: '#1a1a2e' };
+    }
+    if (mode === 'tinted-light') {
+      return { background: '#d0d0e8' };
     }
     if (background.type === 'gradient' && background.colors) {
+      const toAlpha = (c: string) =>
+        c.startsWith('hsl(')
+          ? c.replace('hsl(', 'hsla(').replace(')', ', 0.2)')
+          : `${c}33`;
       return {
-        background: `linear-gradient(${background.angle ?? 135}deg, ${background.colors[0]}33, ${background.colors[1]}33)`,
+        background: `linear-gradient(${background.angle ?? 135}deg, ${toAlpha(background.colors[0])}, ${toAlpha(background.colors[1])})`,
       };
     }
     return { background: '#2a2a2e' };

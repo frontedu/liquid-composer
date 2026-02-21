@@ -1,65 +1,155 @@
-import React, { useRef, useEffect } from 'react';
+import React from 'react';
 import { useStore } from '@nanostores/react';
-import { $layers, $background } from '../../store/iconStore';
 import { $appearanceMode, setAppearanceMode } from '../../store/uiStore';
 import type { AppearanceMode } from '../../types/index';
-import { renderIconToCanvas } from '../../engine/IconRenderer';
 
-interface ThumbProps {
-  mode: AppearanceMode;
-  label: string;
-  active?: boolean;
-  onClick?: () => void;
+type LightDark = 'light' | 'dark';
+type Variant   = 'default' | 'clear' | 'tinted';
+
+function toMode(ld: LightDark, v: Variant): AppearanceMode {
+  if (v === 'default') return ld === 'light' ? 'default' : 'dark';
+  return `${v}-${ld}` as AppearanceMode;
 }
 
-function IconThumb({ mode, label, active, onClick }: ThumbProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const layers = useStore($layers);
-  const background = useStore($background);
+function fromMode(mode: AppearanceMode): { ld: LightDark; variant: Variant } {
+  switch (mode) {
+    case 'default':      return { ld: 'light', variant: 'default' };
+    case 'dark':         return { ld: 'dark',  variant: 'default' };
+    case 'clear-light':  return { ld: 'light', variant: 'clear'   };
+    case 'clear-dark':   return { ld: 'dark',  variant: 'clear'   };
+    case 'tinted-light': return { ld: 'light', variant: 'tinted'  };
+    case 'tinted-dark':  return { ld: 'dark',  variant: 'tinted'  };
+  }
+}
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    renderIconToCanvas(canvas, { layers, background, lightAngle: -45, appearanceMode: mode, size: 32 });
-  }, [layers, background, mode]);
+// ─── Glass segmented control ───────────────────────────────────────────────
 
+interface SegOption<T extends string> {
+  value: T;
+  label: string;
+}
+
+function GlassSeg<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: SegOption<T>[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
   return (
-    <button
-      onClick={onClick}
-      className={`flex flex-col items-center gap-1 p-1 rounded transition-colors
-        ${active ? 'bg-[#2a2a2a]' : 'hover:bg-[#2a2a2a]'}`}
+    <div
+      className="flex items-center gap-0.5 p-0.5 rounded-[10px]"
+      style={{
+        background: 'rgba(255,255,255,0.055)',
+        border: '0.5px solid rgba(255,255,255,0.10)',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
+      }}
     >
-      <canvas
-        ref={canvasRef}
-        width={32}
-        height={32}
-        className="rounded-[7px]"
-        style={{ imageRendering: 'pixelated' }}
-      />
-      <span className="text-2xs text-[#636366]">{label}</span>
-    </button>
+      {options.map((opt) => {
+        const active = value === opt.value;
+        return (
+          <button
+            key={opt.value}
+            onClick={() => onChange(opt.value)}
+            className="relative px-3 py-[5px] text-[11px] font-medium rounded-[8px] transition-all duration-150 tracking-tight"
+            style={
+              active
+                ? {
+                    color: '#ffffff',
+                    background:
+                      'linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.10) 100%)',
+                    boxShadow:
+                      '0 1px 4px rgba(0,0,0,0.4), 0 0.5px 0 rgba(255,255,255,0.22) inset',
+                  }
+                : {
+                    color: 'rgba(255,255,255,0.32)',
+                    background: 'transparent',
+                  }
+            }
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
+// ─── Mode label helper ──────────────────────────────────────────────────────
+
+const MODE_LABEL: Record<AppearanceMode, string> = {
+  'default':      'Default Light',
+  'dark':         'Default Dark',
+  'clear-light':  'Clear Light',
+  'clear-dark':   'Clear Dark',
+  'tinted-light': 'Tinted Light',
+  'tinted-dark':  'Tinted Dark',
+};
+
+// ─── Component ─────────────────────────────────────────────────────────────
+
 export function BottomBar() {
   const mode = useStore($appearanceMode);
+  const { ld, variant } = fromMode(mode);
+
+  const setLd = (v: LightDark)  => setAppearanceMode(toMode(v, variant));
+  const setVar = (v: Variant)   => setAppearanceMode(toMode(ld, v));
 
   return (
-    <div className="flex items-center justify-between h-14 bg-[#1c1c1e] border-t border-[#2c2c2e] px-4">
-      <div className="flex items-center gap-3">
-        <span className="text-xs text-[#636366]">iOS, macOS</span>
-        <div className="flex items-center gap-1">
-          <IconThumb mode="default" label="Default" active={mode === 'default'} onClick={() => setAppearanceMode('default')} />
-          <IconThumb mode="dark" label="Dark" active={mode === 'dark'} onClick={() => setAppearanceMode('dark')} />
-        </div>
+    <div
+      className="flex items-center justify-between h-14 px-5"
+      style={{
+        background: 'rgba(22,22,24,0.78)',
+        backdropFilter: 'blur(32px) saturate(200%)',
+        WebkitBackdropFilter: 'blur(32px) saturate(200%)',
+        borderTop: '0.5px solid rgba(255,255,255,0.07)',
+      }}
+    >
+      {/* Left — Light / Dark */}
+      <div className="flex items-center gap-2.5">
+        <span
+          className="text-[10px] font-semibold uppercase tracking-widest"
+          style={{ color: 'rgba(255,255,255,0.25)' }}
+        >
+          Appearance
+        </span>
+        <GlassSeg<LightDark>
+          options={[
+            { value: 'light', label: 'Light' },
+            { value: 'dark',  label: 'Dark'  },
+          ]}
+          value={ld}
+          onChange={setLd}
+        />
       </div>
-      <div className="flex items-center gap-3">
-        <span className="text-xs text-[#636366]">Variants</span>
-        <div className="flex items-center gap-1">
-          <IconThumb mode="default" label="Default" active={mode === 'default'} onClick={() => setAppearanceMode('default')} />
-          <IconThumb mode="dark" label="Dark" active={mode === 'dark'} onClick={() => setAppearanceMode('dark')} />
-          <IconThumb mode="mono" label="Mono" active={mode === 'mono'} onClick={() => setAppearanceMode('mono')} />
-        </div>
+
+      {/* Center — current mode name */}
+      <span
+        className="text-[11px] font-medium tracking-tight select-none tabular-nums"
+        style={{ color: 'rgba(255,255,255,0.20)' }}
+      >
+        {MODE_LABEL[mode]}
+      </span>
+
+      {/* Right — Default / Clear / Tinted */}
+      <div className="flex items-center gap-2.5">
+        <GlassSeg<Variant>
+          options={[
+            { value: 'default', label: 'Default' },
+            { value: 'clear',   label: 'Clear'   },
+            { value: 'tinted',  label: 'Tinted'  },
+          ]}
+          value={variant}
+          onChange={setVar}
+        />
+        <span
+          className="text-[10px] font-semibold uppercase tracking-widest"
+          style={{ color: 'rgba(255,255,255,0.25)' }}
+        >
+          Style
+        </span>
       </div>
     </div>
   );

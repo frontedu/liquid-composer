@@ -1,4 +1,5 @@
 import { atom, computed } from 'nanostores';
+import { selectLayer } from './uiStore';
 import type {
   Layer,
   BackgroundConfig,
@@ -14,14 +15,14 @@ function generateId(): string {
 
 function defaultLiquidGlass(): LiquidGlassConfig {
   return {
-    enabled: false,
+    enabled: true,          // Liquid Glass on by default
     mode: 'individual',
     specular: true,
-    blur: { enabled: true, value: 40 },
-    translucency: { enabled: true, value: 60 },
-    dark: { enabled: false, value: 20 },
-    mono: { enabled: false, value: 0 },
-    shadow: { type: 'neutral', enabled: true, value: 30 },
+    blur:         { enabled: true,  value: 42 },
+    translucency: { enabled: true,  value: 58 },
+    dark:         { enabled: false, value: 20 },
+    mono:         { enabled: false, value: 0  },
+    shadow:       { type: 'chromatic', enabled: true, value: 45 },
   };
 }
 
@@ -37,7 +38,7 @@ export function createLayer(name: string, parentId: string | null = null): Layer
     blendMode: 'normal' as BlendMode,
     fill: { type: 'none' },
     liquidGlass: defaultLiquidGlass(),
-    layout: { x: 0, y: 0, scale: 100 },
+    layout: { x: 0, y: 0, scale: 66 },
   };
 }
 
@@ -54,8 +55,16 @@ export function createGroup(name: string, parentId: string | null = null): Layer
     blendMode: 'normal' as BlendMode,
     fill: { type: 'none' },
     liquidGlass: defaultLiquidGlass(),
-    layout: { x: 0, y: 0, scale: 100 },
+    layout: { x: 0, y: 0, scale: 66 },
   };
+}
+
+export function bgColorsFromHueTint(hue: number, tint: number): [string, string] {
+  const s1 = Math.round(85 - tint * 0.6); // 85 → 25
+  const l1 = Math.round(48 + tint * 0.28); // 48 → 76
+  const s2 = Math.round(68 - tint * 0.5);
+  const l2 = Math.round(61 + tint * 0.22);
+  return [`hsl(${hue}, ${s1}%, ${l1}%)`, `hsl(${hue}, ${s2}%, ${l2}%)`];
 }
 
 export const $iconName = atom<string>('Untitled');
@@ -63,8 +72,9 @@ export const $iconModified = atom<boolean>(false);
 export const $layers = atom<Layer[]>([]);
 export const $background = atom<BackgroundConfig>({
   type: 'gradient',
-  preset: 'warm',
-  colors: ['#ff6b6b', '#ffd93d'],
+  hue: 220,
+  tint: 20,
+  colors: bgColorsFromHueTint(220, 20),
   angle: 135,
 });
 
@@ -78,6 +88,7 @@ export const $rootLayers = computed($layers, (layers) =>
 
 export function addLayer(blobUrl?: string, sourceFile?: string, parentId: string | null = null) {
   const layers = $layers.get();
+  const wasEmpty = layers.filter((l) => l.parentId === null).length === 0;
   const maxOrder = layers.filter((l) => l.parentId === parentId).length;
   const layer = createLayer(sourceFile ?? `Layer ${layers.length + 1}`, parentId);
   layer.order = maxOrder;
@@ -85,6 +96,7 @@ export function addLayer(blobUrl?: string, sourceFile?: string, parentId: string
   if (sourceFile) layer.sourceFile = sourceFile;
   $layers.set([...layers, layer]);
   $iconModified.set(true);
+  if (wasEmpty) selectLayer(layer.id);
   return layer.id;
 }
 
@@ -169,6 +181,11 @@ export function reorderLayer(id: string, newOrder: number) {
   $iconModified.set(true);
 }
 
+export function setIconName(name: string) {
+  $iconName.set(name.trim() || 'Untitled');
+  $iconModified.set(true);
+}
+
 export function updateBackground(bg: Partial<BackgroundConfig>) {
   $background.set({ ...$background.get(), ...bg } as BackgroundConfig);
   $iconModified.set(true);
@@ -178,5 +195,5 @@ export function resetDocument() {
   $iconName.set('Untitled');
   $iconModified.set(false);
   $layers.set([]);
-  $background.set({ type: 'gradient', preset: 'warm', colors: ['#ff6b6b', '#ffd93d'], angle: 135 });
+  $background.set({ type: 'gradient', hue: 220, tint: 20, colors: bgColorsFromHueTint(220, 20), angle: 135 });
 }

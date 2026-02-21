@@ -16,9 +16,8 @@ export type BlendMode =
   | 'color'
   | 'luminosity';
 
-// Apple HIG defines 6 modes for iOS 26: Default Light/Dark, Clear Light/Dark, Tinted Light/Dark.
-// clear-light / clear-dark use Liquid Glass on the background layer (planned for Phase 3).
-export type AppearanceMode = 'default' | 'dark' | 'mono' | 'clear-light' | 'clear-dark';
+// Apple HIG defines 6 modes for iOS 26: Default, Dark, Clear (light), Clear (dark), Tinted (light), Tinted (dark).
+export type AppearanceMode = 'default' | 'dark' | 'clear-light' | 'clear-dark' | 'tinted-light' | 'tinted-dark';
 
 export interface ColorStop {
   offset: number; // 0-1
@@ -76,6 +75,8 @@ export interface BackgroundConfig {
   color?: string;
   colors?: [string, string]; // gradient start/end
   angle?: number;
+  hue?: number;  // 0–360, used by the hue/tint picker
+  tint?: number; // 0–100, 0 = vibrant, 100 = very pale
 }
 
 export interface AppearanceOverride {
