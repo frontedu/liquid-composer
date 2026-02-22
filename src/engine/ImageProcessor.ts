@@ -33,10 +33,12 @@ export function drawSquirclePath(ctx: CanvasRenderingContext2D, x: number, y: nu
   const r = size / 2;
   const cx = x + r;
   const cy = y + r;
+  // Adaptive steps: more points for larger canvases so each segment ≤ ~1px
+  const steps = Math.max(360, Math.ceil(size * 2));
 
   ctx.beginPath();
-  for (let i = 0; i <= 360; i++) {
-    const angle = (i * 2 * Math.PI) / 360;
+  for (let i = 0; i <= steps; i++) {
+    const angle = (i * 2 * Math.PI) / steps;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const px = cx + r * Math.sign(cos) * Math.pow(Math.abs(cos), 2 / n);
@@ -50,9 +52,10 @@ export function drawSquirclePath(ctx: CanvasRenderingContext2D, x: number, y: nu
 export function drawSquirclePathToPath2D(size: number, n = 5): Path2D {
   const path = new Path2D();
   const r = size / 2;
+  const steps = Math.max(360, Math.ceil(size * 2));
 
-  for (let i = 0; i <= 360; i++) {
-    const angle = (i * 2 * Math.PI) / 360;
+  for (let i = 0; i <= steps; i++) {
+    const angle = (i * 2 * Math.PI) / steps;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const px = r + r * Math.sign(cos) * Math.pow(Math.abs(cos), 2 / n);

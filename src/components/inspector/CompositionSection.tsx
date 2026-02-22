@@ -16,13 +16,13 @@ export function CompositionSection() {
   const { layout, visible } = layer;
 
   return (
-    <div className="border-b border-[#2c2c2e] pb-3">
-      <div className="flex items-center justify-between px-3 py-2">
+    <div className="border-b border-[#2c2c2e] pb-5">
+      <div className="flex items-center justify-between px-3 py-3">
         <span className="text-xs font-semibold text-[#ebebf5]">Composition</span>
         <span className="text-2xs text-[#636366] bg-[#2a2a2a] px-1.5 py-0.5 rounded">All</span>
       </div>
 
-      <div className="px-3 space-y-2.5">
+      <div className="px-3 space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-xs text-[#636366]">Visible</span>
           <Toggle checked={visible} onChange={(v) => updateLayer(layer.id, { visible: v })} />

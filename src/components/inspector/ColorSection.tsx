@@ -37,13 +37,13 @@ export function ColorSection() {
   const fill = layer.fill;
 
   return (
-    <div className="border-b border-[#2c2c2e] pb-3">
-      <div className="flex items-center justify-between px-3 py-2">
+    <div className="border-b border-[#2c2c2e] pb-5">
+      <div className="flex items-center justify-between px-3 py-3">
         <span className="text-xs font-semibold text-[#ebebf5]">Color</span>
         <span className="text-2xs text-[#636366] bg-[#2a2a2a] px-1.5 py-0.5 rounded">All</span>
       </div>
 
-      <div className="px-3 space-y-2.5">
+      <div className="px-3 space-y-3">
         <Slider
           label="Opacity"
           value={layer.opacity}
@@ -95,7 +95,7 @@ export function ColorSection() {
                   type="text"
                   value={fill.color ?? '#ffffff'}
                   onChange={(e) => updateLayerFill(layer.id, { type: 'solid', color: e.target.value })}
-                  className="flex-1 text-xs bg-[#2a2a2a] border border-[#3a3a3c] rounded px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
+                  className="flex-1 text-xs bg-[#2a2a2a] border border-[#3a3a3c] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
                 />
               </div>
             </div>

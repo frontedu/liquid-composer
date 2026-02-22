@@ -18,11 +18,11 @@ function defaultLiquidGlass(): LiquidGlassConfig {
     enabled: true,          // Liquid Glass on by default
     mode: 'individual',
     specular: true,
-    blur:         { enabled: true,  value: 42 },
-    translucency: { enabled: true,  value: 58 },
-    dark:         { enabled: false, value: 20 },
-    mono:         { enabled: false, value: 0  },
-    shadow:       { type: 'chromatic', enabled: true, value: 45 },
+    blur: { enabled: true, value: 42 },
+    translucency: { enabled: true, value: 58 },
+    dark: { enabled: false, value: 20 },
+    mono: { enabled: false, value: 0 },
+    shadow: { type: 'chromatic', enabled: true, value: 45 },
   };
 }
 
@@ -59,11 +59,12 @@ export function createGroup(name: string, parentId: string | null = null): Layer
   };
 }
 
-export function bgColorsFromHueTint(hue: number, tint: number): [string, string] {
+export function bgColorsFromHueTint(hue: number, tint: number, brightness = 100): [string, string] {
+  const bFactor = Math.max(0.05, brightness / 100);
   const s1 = Math.round(85 - tint * 0.6); // 85 → 25
-  const l1 = Math.round(48 + tint * 0.28); // 48 → 76
+  const l1 = Math.round((48 + tint * 0.28) * bFactor);
   const s2 = Math.round(68 - tint * 0.5);
-  const l2 = Math.round(61 + tint * 0.22);
+  const l2 = Math.round((61 + tint * 0.22) * bFactor);
   return [`hsl(${hue}, ${s1}%, ${l1}%)`, `hsl(${hue}, ${s2}%, ${l2}%)`];
 }
 
@@ -135,19 +136,32 @@ export function updateLayer(id: string, updates: Partial<Layer>) {
   $iconModified.set(true);
 }
 
-export function updateLayerLiquidGlass(id: string, updates: Partial<LiquidGlassConfig>) {
+export function updateLayerLiquidGlass(id: string, lg: Partial<LiquidGlassConfig>) {
+  const layer = $layers.get().find((l) => l.id === id);
+  if (layer) updateLayer(id, { liquidGlass: { ...layer.liquidGlass, ...lg } });
+}
+
+export function updateAllLayersLiquidGlass(updates: Partial<LiquidGlassConfig>) {
   $layers.set(
-    $layers.get().map((l) =>
-      l.id === id
-        ? { ...l, liquidGlass: { ...l.liquidGlass, ...updates } }
-        : l
-    )
+    $layers.get().map((l) => ({
+      ...l,
+      liquidGlass: { ...l.liquidGlass, ...updates }
+    }))
   );
   $iconModified.set(true);
 }
 
 export function updateLayerFill(id: string, fill: FillConfig) {
   updateLayer(id, { fill });
+}
+
+export function moveLayerToGroup(layerId: string, targetGroupId: string | null) {
+  const layers = $layers.get();
+  const layer = layers.find(l => l.id === layerId);
+  if (!layer) return;
+  // Put at the end of the new (or root) group
+  const maxOrder = layers.filter(l => l.parentId === targetGroupId).length;
+  updateLayer(layerId, { parentId: targetGroupId, order: maxOrder });
 }
 
 export function toggleLayerVisibility(id: string) {

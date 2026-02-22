@@ -1,7 +1,6 @@
 import React from 'react';
 import { TopToolbar } from './TopToolbar';
 import { LeftPanel } from './LeftPanel';
-import { BottomBar } from './BottomBar';
 import { IconCanvas } from '../canvas/IconCanvas';
 import { InspectorPanel } from '../inspector/InspectorPanel';
 
@@ -14,7 +13,6 @@ export function AppLayout() {
         <IconCanvas />
         <InspectorPanel />
       </div>
-      <BottomBar />
     </div>
   );
 }

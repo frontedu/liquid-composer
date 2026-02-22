@@ -1,9 +1,23 @@
-// ─── Vertex shader ───────────────────────────────────────────────────────────
-const VERT_SRC = `
-attribute vec2 aPosition;
-attribute vec2 aTexCoord;
-varying vec2 vUV;
-varying vec2 vScreenUV;
+// ─── WebGL2 Liquid Glass Renderer ────────────────────────────────────────────
+//
+// Multi-pass pipeline:
+//   Pass 1: Horizontal separable Gaussian blur  (bg → FBO_A)
+//   Pass 2: Vertical separable Gaussian blur    (FBO_A → FBO_B)
+//   Pass 3: Glass composite with physical lighting (layer + FBO_B + bg → output)
+//
+// Improvements over WebGL1 version:
+//   • Proper 2-pass separable Gaussian (vs single 5×5 box — better quality, fewer samples)
+//   • Derivative-based edge detection (dFdx/dFdy — no extra texture fetch per sample)
+//   • Correct surface normals from alpha gradient for Fresnel/rim lighting
+//   • Chromatic aberration localized to edge region only
+//   • Background blur cache (shared across layers per frame)
+
+// ─── Shared vertex shader (fullscreen quad, GLSL 3.00) ───────────────────────
+const VERT_SRC = `#version 300 es
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec2 aTexCoord;
+out vec2 vUV;
+out vec2 vScreenUV;
 
 void main() {
   vUV = aTexCoord;
@@ -13,206 +27,236 @@ void main() {
 }
 `;
 
-// ─── Fragment shader ──────────────────────────────────────────────────────────
-// Implements all Liquid Glass passes:
-//   1. Background blur (5×5 box, saturation boost)
-//   2. Chromatic aberration (per-channel UV offset based on edge distance)
-//   3. Glass tint overlay
-//   4. Specular highlight (gamma-sharpened, directional)
-//   5. Secondary top-edge specular (characteristic of Apple glass)
-//   6. Fresnel rim (edge-based, directional)
-//   7. Inner shadow (radial dark vignette at edges)
-//   8. Border glow (alpha-gradient edge detection)
-//   9. Dark / mono mode adjustments
-const FRAG_SRC = `
-precision mediump float;
+// ─── Separable Gaussian blur shader ──────────────────────────────────────────
+// 9-tap Gaussian kernel (sigma ≈ 1.5). Direction toggled by uHorizontal.
+// uRadius: pixel-space blur radius (0 = no blur)
+const BLUR_SRC = `#version 300 es
+precision highp float;
 
-varying vec2 vUV;
-varying vec2 vScreenUV;
+in vec2 vUV;
+// aPosition and aTexCoord are consumed by vertex shader (shared VERT_SRC)
 
-uniform sampler2D uLayerTex;
-uniform sampler2D uBackgroundTex;
+uniform sampler2D uTex;
+uniform vec2  uTexelSize;   // 1.0 / textureSize
+uniform float uRadius;      // blur radius in texel units
+uniform bool  uHorizontal;
 
-uniform float uBlur;           // 0-1 → background blur strength
-uniform float uTranslucency;   // 0-1 → how much bg shows through
-uniform float uSpecular;       // 0-1 → specular intensity (0 = disabled)
-uniform vec2  uLightDir;       // normalized: light comes FROM this direction
-uniform float uOpacity;        // 0-1
-uniform int   uMode;           // 0=default 1=dark 2=mono
-uniform float uDarkAdjust;     // 0-1
-uniform float uMonoAdjust;     // 0-1
-uniform float uAberration;     // 0-1 → chromatic aberration strength
+out vec4 fragColor;
+
+// 9-tap weights (symmetric, normalised so sum = 1)
+const float W[9] = float[](0.028, 0.067, 0.124, 0.179, 0.204, 0.179, 0.124, 0.067, 0.028);
+
+void main() {
+  if (uRadius < 0.5) {
+    fragColor = texture(uTex, vUV);
+    return;
+  }
+  vec4 sum = vec4(0.0);
+  float step = uRadius / 4.0; // spread 4 tap-widths per radius unit
+  for (int i = 0; i < 9; i++) {
+    float offset = float(i - 4) * step;
+    vec2 off = uHorizontal
+      ? vec2(offset * uTexelSize.x, 0.0)
+      : vec2(0.0, offset * uTexelSize.y);
+    sum += texture(uTex, clamp(vUV + off, 0.0005, 0.9995)) * W[i];
+  }
+  // Saturation boost: glass picks up vivid background colour
+  float gray = dot(sum.rgb, vec3(0.299, 0.587, 0.114));
+  sum.rgb = mix(vec3(gray), sum.rgb, 1.35);
+  fragColor = clamp(sum, 0.0, 1.0);
+}
+`;
+
+// ─── Glass composite shader ───────────────────────────────────────────────────
+// Implements physical liquid glass:
+//   1. Read blurred bg, apply glass tint + translucency
+//   2. Chromatic aberration along edge normals
+//   3. Directional specular highlight (primary spot + top-edge strip)
+//   4. Fresnel rim light (proper normal from alpha gradient)
+//   5. Edge border glow (lit vs shadow side)
+//   6. Inner shadow (radial dark vignette)
+//   7. Frostiness: blur drives milkiness even on uniform backgrounds
+//   8. Dark / clear mode adjustments
+const GLASS_SRC = `#version 300 es
+precision highp float;
+
+in vec2 vUV;
+in vec2 vScreenUV;
+
+uniform sampler2D uLayerTex;       // layer content (alpha = glass mask)
+uniform sampler2D uBlurredBgTex;   // 2-pass Gaussian blurred background
+uniform sampler2D uOrigBgTex;      // original (sharp) background
+
+uniform float uBlur;               // 0-1: blur / frostiness strength
+uniform float uTranslucency;       // 0-1: bg show-through
+uniform float uSpecular;           // 0-1: specular intensity (0 = off)
+uniform vec2  uLightDir;           // normalised, FROM light source
+uniform float uOpacity;            // 0-1
+uniform int   uMode;               // 0=default, 1=dark, 2=clear
+uniform float uDarkAdjust;         // 0-1
+uniform float uMonoAdjust;         // 0-1
+uniform float uAberration;         // 0-1: chromatic aberration strength
+uniform vec2  uTexelSize;          // 1/resolution
+
+out vec4 fragColor;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// 5×5 box blur on a texture, with 40% saturation boost
-vec4 blurAndSaturate(sampler2D tex, vec2 uv, float radius) {
-  if (radius < 0.001) {
-    vec4 c = texture2D(tex, uv);
-    float g = dot(c.rgb, vec3(0.299, 0.587, 0.114));
-    c.rgb = mix(vec3(g), c.rgb, 1.4);
-    return c;
-  }
-  float s = radius * 0.010;
-  vec4 sum = vec4(0.0);
-  for (float dx = -2.0; dx <= 2.0; dx += 1.0) {
-    for (float dy = -2.0; dy <= 2.0; dy += 1.0) {
-      sum += texture2D(tex, clamp(uv + vec2(dx, dy) * s, 0.001, 0.999));
-    }
-  }
-  vec4 blurred = sum / 25.0;
-  // Saturation boost: glass picks up vivid background colour
-  float gray = dot(blurred.rgb, vec3(0.299, 0.587, 0.114));
-  blurred.rgb = mix(vec3(gray), blurred.rgb, 1.40);
-  return clamp(blurred, 0.0, 1.0);
+float sampleAlpha(vec2 uv) {
+  return texture(uLayerTex, uv).a;
 }
 
-// Detect silhouette edge: returns 1.0 at the boundary of the layer alpha
-float edgeDetect(sampler2D tex, vec2 uv) {
-  float step = 0.007;
-  float c  = texture2D(tex, uv).a;
-  float up = texture2D(tex, uv + vec2(0.0,  step)).a;
-  float dn = texture2D(tex, uv + vec2(0.0, -step)).a;
-  float lt = texture2D(tex, uv + vec2(-step, 0.0)).a;
-  float rt = texture2D(tex, uv + vec2( step, 0.0)).a;
-  float minN = min(min(up, dn), min(lt, rt));
-  // We are on an edge if we are opaque and at least one neighbour is transparent
-  return smoothstep(0.5, 0.0, minN) * c;
+// Compute surface normal from alpha gradient using finite differences.
+// Returns the RAW (non-normalised) gradient — its length encodes edge strength.
+vec2 alphaGradient(vec2 uv) {
+  vec2 e = uTexelSize * 2.0; // slightly wider kernel for smoother normals
+  float aR = sampleAlpha(uv + vec2(e.x, 0.0));
+  float aL = sampleAlpha(uv - vec2(e.x, 0.0));
+  float aU = sampleAlpha(uv + vec2(0.0, e.y));
+  float aD = sampleAlpha(uv - vec2(0.0, e.y));
+  return vec2(aR - aL, aU - aD) * 0.5;
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// Edge magnitude: smooth falloff from edge — NOT clipped to binary 0/1.
+// Uses derivative instructions (WebGL2 only) — sub-pixel precise.
+float edgeMagnitude(float alpha) {
+  vec2 d = vec2(dFdx(alpha), dFdy(alpha));
+  // Factor ~4 spreads the edge over ~2 pixels rather than snapping to 1 pixel
+  return clamp(length(d) * 4.0, 0.0, 1.0);
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 void main() {
-  vec4 layerColor = texture2D(uLayerTex, vUV);
-  if (layerColor.a < 0.01) { gl_FragColor = vec4(0.0); return; }
+  float alpha = sampleAlpha(vUV);
+  if (alpha < 0.01) { fragColor = vec4(0.0); return; }
 
-  vec2 fromCenter = vUV - 0.5;
-  float distFromCenter = length(fromCenter);        // 0=center  ~0.7=corner
-  vec2  normDir = distFromCenter > 0.001 ? normalize(fromCenter) : vec2(0.0);
+  // Surface gradient and edge strength
+  vec2  grad     = alphaGradient(vUV);
+  float gradLen  = length(grad);              // ~0.5 at edges, ~0 inside
+  vec2  normal   = gradLen > 0.001 ? grad / gradLen : vec2(0.0); // normalised direction
+  float normalLen = clamp(gradLen * 3.0, 0.0, 1.0); // smooth 0→1 edge falloff
+  float edge     = edgeMagnitude(alpha);
 
-  // ── PASS 1 + 2: Background blur with chromatic aberration ────────────────
-  float blurStr = uBlur * 0.55;
+  vec2 fromCenter   = vUV - 0.5;
+  float dist        = length(fromCenter);
+  vec2  normFromCtr = dist > 0.001 ? normalize(fromCenter) : vec2(0.0);
 
-  // Aberration: channels diverge more at the silhouette edge
-  float edgeFactor = clamp(distFromCenter * 1.8, 0.0, 1.0);
-  float chromaOffset = edgeFactor * uAberration * 0.012;
+  // ── 1. Base glass: blurred bg + tint ──────────────────────────────────────
+  // Chromatic aberration: offset R/B channels along edge normal
+  vec2 aberrOff = normal * edge * uAberration * 0.006;
+  float r = texture(uBlurredBgTex, clamp(vScreenUV + aberrOff,        0.001, 0.999)).r;
+  float g = texture(uBlurredBgTex, clamp(vScreenUV,                   0.001, 0.999)).g;
+  float b = texture(uBlurredBgTex, clamp(vScreenUV - aberrOff * 1.2,  0.001, 0.999)).b;
+  vec4 bgBlurred = vec4(r, g, b, 1.0);
 
-  vec2 uvR = clamp(vScreenUV + normDir * chromaOffset,        0.001, 0.999);
-  vec2 uvG = vScreenUV;
-  vec2 uvB = clamp(vScreenUV - normDir * chromaOffset * 1.3,  0.001, 0.999);
+  // Frostiness: blur slider drives milkiness (visible even on smooth gradients)
+  vec4 frostTint = (uMode == 1)
+    ? vec4(0.06, 0.06, 0.10, 1.0)   // dark: blue-black frost
+    : (uMode == 2)
+      ? vec4(0.96, 0.97, 1.00, 1.0)  // clear: pure white frost
+      : vec4(0.94, 0.96, 1.00, 1.0); // default: cool white frost
+  bgBlurred.rgb = mix(bgBlurred.rgb, frostTint.rgb, uBlur * 0.40);
 
-  float rr = blurAndSaturate(uBackgroundTex, uvR, blurStr).r;
-  float gg = blurAndSaturate(uBackgroundTex, uvG, blurStr).g;
-  float bb = blurAndSaturate(uBackgroundTex, uvB, blurStr).b;
-  vec4 bgBlurred = vec4(rr, gg, bb, 1.0);
-
-  // ── PASS 3: Glass tint overlay ────────────────────────────────────────────
+  // Glass tint
   vec4 glassTint = (uMode == 1)
-    ? vec4(0.04, 0.04, 0.07, 1.0)   // dark: blue-black tint
-    : vec4(0.96, 0.97, 1.00, 1.0);  // light: cool white tint
+    ? vec4(0.05, 0.05, 0.08, 1.0)
+    : frostTint;
 
-  vec4 glassBase = mix(glassTint, bgBlurred, clamp(uTranslucency * 1.2, 0.0, 1.0));
+  vec4 layerColor = texture(uLayerTex, vUV);
+  vec4 glassBase  = mix(glassTint, bgBlurred, clamp(uTranslucency * 1.2, 0.0, 1.0));
+  vec4 result     = mix(layerColor, glassBase, uTranslucency * 0.80);
 
-  // Blend glass base with original layer colour
-  vec4 result = mix(layerColor, glassBase, uTranslucency * 0.80);
-
-  // ── PASS 4 + 5: Specular highlight ───────────────────────────────────────
+  // ── 2. Specular highlight (directional, gamma-sharpened) ──────────────────
   if (uSpecular > 0.0) {
-    // Primary: focused bright spot at the lit corner
-    // uLightDir points FROM the light, so litPos is in the opposite direction
-    vec2 litPos = vec2(0.5) - uLightDir * 0.32;
-    float dLit = length(vUV - litPos);
-    // Gamma-sharpened (exponent=5): crisp but smooth highlight
-    float spec = pow(max(0.0, 1.0 - dLit / 0.65), 5.0);
+    // Primary spot: offset in the direction light comes FROM
+    vec2 litPos   = vec2(0.5) - uLightDir * 0.30;
+    float dLit    = length(vUV - litPos);
+    float spec    = pow(max(0.0, 1.0 - dLit / 0.60), 5.0);
 
-    // Secondary: top-edge strip (curved glass characteristic)
-    float topEdge   = smoothstep(0.28, 0.02, abs(vUV.y - 0.86));
-    float topFalloff = smoothstep(0.60, 0.0, dLit);
-    float topSpec   = topEdge * topFalloff;
+    // Top-edge strip (characteristic curved-glass highlight)
+    float topEdge    = smoothstep(0.30, 0.02, abs(vUV.y - 0.86));
+    float topFalloff = smoothstep(0.55, 0.0, dLit);
+    float topSpec    = topEdge * topFalloff;
 
-    float totalSpec = spec * 0.70 + topSpec * 0.55;
-    vec3  specColor = vec3(0.96, 0.98, 1.00); // slightly cool white
-    result.rgb += totalSpec * uSpecular * specColor;
+    float totalSpec = spec * 0.38 + topSpec * 0.24;
+    result.rgb += totalSpec * uSpecular * vec3(0.96, 0.98, 1.00);
   }
 
-  // ── PASS 6: Fresnel rim light ─────────────────────────────────────────────
+  // ── 3. Fresnel rim light (correct normals from alpha gradient) ────────────
   {
-    // Fresnel: strongest at edges, falls off towards centre
-    float fresnel = distFromCenter * 2.0;        // 0→centre, 1→edge
-    fresnel = clamp(fresnel, 0.0, 1.0);
-    fresnel = fresnel * fresnel;                 // square for tighter edge
-
-    // Directional modulation: lit side is brighter
+    // Fresnel: uses actual surface normal for physically correct directionality
+    float ndotv   = max(0.0, dot(normal, -uLightDir));
+    // Falloff: rim is bright at edge (normalLen ~ 1), dark inside (normalLen ~ 0)
+    float rimBase = normalLen * normalLen;
+    // Directional: lit side (toward light) is brighter; shadow side dim
     float litSide = (uSpecular > 0.0)
-      ? max(0.0, dot(normDir, -uLightDir)) * 0.5 + 0.55
-      : 0.75;
-
-    float rim = fresnel * litSide * 0.38;
+      ? ndotv * 0.55 + 0.45
+      : 0.70;
+    float rim = rimBase * litSide * 0.20;
     result.rgb += rim;
   }
 
-  // ── PASS 7: Inner shadow ──────────────────────────────────────────────────
+  // ── 4. Border glow (edge ring, lit side bright, shadow side dim) ──────────
   {
-    // Soft dark vignette near the silhouette, fading to transparent at centre
-    float innerS = smoothstep(0.35, 0.52, distFromCenter);
-    float shadowStrength = (uMode == 1) ? 0.45 : 0.18;
-    result.rgb = mix(result.rgb, result.rgb * 0.25, innerS * shadowStrength);
+    float ndotv = (uSpecular > 0.0)
+      ? max(0.0, dot(normal, -uLightDir)) * 0.55 + 0.40
+      : 0.65;
+    result.rgb += edge * ndotv * 0.45;
   }
 
-  // ── PASS 8: Border glow ───────────────────────────────────────────────────
+  // ── 5. Inner shadow (radial vignette at edges, fades to centre) ───────────
   {
-    float edge = edgeDetect(uLayerTex, vUV);
-
-    // Directional: lit side of border is brighter
-    float borderBright = (uSpecular > 0.0)
-      ? max(0.0, dot(normDir, -uLightDir)) * 0.55 + 0.45
-      : 0.70;
-
-    result.rgb += edge * borderBright * 0.90;
+    float innerS       = smoothstep(0.32, 0.50, dist);
+    float shadowStr    = (uMode == 1) ? 0.38 : 0.14;
+    result.rgb         = mix(result.rgb, result.rgb * 0.22, innerS * shadowStr);
   }
 
-  // ── PASS 9: Dark / Mono mode adjustments ─────────────────────────────────
+  // ── 6. Appearance mode adjustments ────────────────────────────────────────
   if (uMode == 1 && uDarkAdjust > 0.0) {
-    result.rgb = mix(result.rgb, result.rgb * 0.40 + vec3(0.02, 0.02, 0.05), uDarkAdjust);
+    // Dark: deepen and blue-shift
+    result.rgb = mix(result.rgb, result.rgb * 0.38 + vec3(0.02, 0.02, 0.05), uDarkAdjust);
   } else if (uMode == 2 && uMonoAdjust > 0.0) {
+    // Clear: desaturate toward white (not grey — glass should look frosted white)
     float gray = dot(result.rgb, vec3(0.299, 0.587, 0.114));
-    result.rgb = mix(result.rgb, vec3(gray), uMonoAdjust);
+    vec3 white = vec3(max(gray, 0.85));
+    result.rgb = mix(result.rgb, white, uMonoAdjust);
   }
 
-  result.a = layerColor.a * uOpacity;
-  gl_FragColor = clamp(result, 0.0, 1.0);
+  result.a = alpha * uOpacity;
+  fragColor = clamp(result, 0.0, 1.0);
 }
 `;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface LiquidGlassParams {
-  blur: number;             // 0-1
-  translucency: number;     // 0-1
+  blur: number;              // 0-1
+  translucency: number;      // 0-1
   specular: boolean;
   specularIntensity: number; // 0-1
-  lightAngle: number;       // degrees
-  opacity: number;          // 0-1
-  mode: 0 | 1 | 2;         // 0=default, 1=dark, 2=mono
+  lightAngle: number;        // degrees
+  opacity: number;           // 0-1
+  mode: 0 | 1 | 2;          // 0=default, 1=dark, 2=clear
   darkAdjust: number;
   monoAdjust: number;
-  aberration: number;       // 0-1 → chromatic aberration strength
+  aberration: number;        // 0-1
 }
 
-// ─── WebGL helpers ────────────────────────────────────────────────────────────
+// ─── WebGL2 helpers ──────────────────────────────────────────────────────────
 
-function compileShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader {
+function compileShader(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
   const shader = gl.createShader(type)!;
   gl.shaderSource(shader, src);
   gl.compileShader(shader);
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    throw new Error(`Shader compile error: ${gl.getShaderInfoLog(shader)}`);
+    throw new Error(`Shader compile error: ${gl.getShaderInfoLog(shader)}\n\nSource:\n${src}`);
   }
   return shader;
 }
 
-function createProgram(gl: WebGLRenderingContext): WebGLProgram {
-  const vert = compileShader(gl, gl.VERTEX_SHADER,   VERT_SRC);
-  const frag = compileShader(gl, gl.FRAGMENT_SHADER, FRAG_SRC);
+function createProgram(gl: WebGL2RenderingContext, fragSrc: string): WebGLProgram {
+  const vert = compileShader(gl, gl.VERTEX_SHADER, VERT_SRC);
+  const frag = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
   const prog = gl.createProgram()!;
   gl.attachShader(prog, vert);
   gl.attachShader(prog, frag);
@@ -220,10 +264,31 @@ function createProgram(gl: WebGLRenderingContext): WebGLProgram {
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
     throw new Error(`Program link error: ${gl.getProgramInfoLog(prog)}`);
   }
+  gl.deleteShader(vert);
+  gl.deleteShader(frag);
   return prog;
 }
 
-function uploadTexture(gl: WebGLRenderingContext, tex: WebGLTexture, source: TexImageSource) {
+function makeTexture(gl: WebGL2RenderingContext, w: number, h: number): WebGLTexture {
+  const tex = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+function makeFBO(gl: WebGL2RenderingContext, tex: WebGLTexture): WebGLFramebuffer {
+  const fbo = gl.createFramebuffer()!;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return fbo;
+}
+
+function uploadSourceTexture(gl: WebGL2RenderingContext, tex: WebGLTexture, source: TexImageSource) {
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -232,95 +297,178 @@ function uploadTexture(gl: WebGLRenderingContext, tex: WebGLTexture, source: Tex
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
 
+function drawFullscreenQuad(gl: WebGL2RenderingContext, vao: WebGLVertexArrayObject) {
+  gl.bindVertexArray(vao);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.bindVertexArray(null);
+}
+
 // ─── Renderer class ───────────────────────────────────────────────────────────
 
 export class LiquidGlassRenderer {
-  private gl: WebGLRenderingContext;
-  private program: WebGLProgram;
-  private posBuffer: WebGLBuffer;
-  private uvBuffer: WebGLBuffer;
+  private gl: WebGL2RenderingContext;
+  private blurProg: WebGLProgram;
+  private glassProg: WebGLProgram;
+  private vao: WebGLVertexArrayObject;
+
+  // Ping-pong FBOs for 2-pass blur
+  private texA: WebGLTexture;
+  private texB: WebGLTexture;
+  private fboA: WebGLFramebuffer;
+  private fboB: WebGLFramebuffer;
+
+  // Source textures
   private layerTex: WebGLTexture;
-  private bgTex: WebGLTexture;
+  private origBgTex: WebGLTexture;
+
+  private size: number;
 
   constructor(canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext('webgl', {
+    const gl = canvas.getContext('webgl2', {
       premultipliedAlpha: false,
       alpha: true,
       preserveDrawingBuffer: true,
-    });
-    if (!gl) throw new Error('WebGL not supported');
+      antialias: false,
+    }) as WebGL2RenderingContext | null;
+    if (!gl) throw new Error('WebGL2 not supported');
     this.gl = gl;
+    this.size = canvas.width;
 
-    this.program = createProgram(gl);
+    this.blurProg  = createProgram(gl, BLUR_SRC);
+    this.glassProg = createProgram(gl, GLASS_SRC);
+
+    // VAO + buffers (fullscreen quad, shared by all passes)
+    this.vao = gl.createVertexArray()!;
+    gl.bindVertexArray(this.vao);
 
     const positions = new Float32Array([-1, -1,  1, -1, -1, 1,  1, 1]);
     const uvs       = new Float32Array([ 0,  1,  1,  1,  0, 0,  1, 0]);
 
-    this.posBuffer = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
+    // Use explicit locations from layout(location=N) in vertex shader
+    const posBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
     gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-    this.uvBuffer = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
+    const uvBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
     gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
 
-    this.layerTex = gl.createTexture()!;
-    this.bgTex    = gl.createTexture()!;
+    gl.bindVertexArray(null);
+
+    const sz = this.size;
+    this.texA      = makeTexture(gl, sz, sz);
+    this.texB      = makeTexture(gl, sz, sz);
+    this.fboA      = makeFBO(gl, this.texA);
+    this.fboB      = makeFBO(gl, this.texB);
+    this.layerTex  = gl.createTexture()!;
+    this.origBgTex = gl.createTexture()!;
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
-  render(layerSource: TexImageSource, bgSource: TexImageSource, params: LiquidGlassParams) {
-    const { gl, program } = this;
-    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-    gl.clearColor(0, 0, 0, 0);
+  // ── 2-pass Gaussian blur on bgSource → texB ─────────────────────────────────
+  private blurBackground(bgSource: TexImageSource, radius: number) {
+    const { gl } = this;
+    const sz = this.size;
+    const texelSize = 1.0 / sz;
+
+    // Upload original bg to origBgTex (used in glass pass for sharp background)
+    uploadSourceTexture(gl, this.origBgTex, bgSource);
+
+    // Horizontal pass: origBgTex → fboA
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboA);
+    gl.viewport(0, 0, sz, sz);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(program);
+    gl.useProgram(this.blurProg);
 
     gl.activeTexture(gl.TEXTURE0);
-    uploadTexture(gl, this.layerTex, layerSource);
-    gl.uniform1i(gl.getUniformLocation(program, 'uLayerTex'), 0);
+    gl.bindTexture(gl.TEXTURE_2D, this.origBgTex);
+    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uTex'), 0);
+    gl.uniform2f(gl.getUniformLocation(this.blurProg, 'uTexelSize'), texelSize, texelSize);
+    gl.uniform1f(gl.getUniformLocation(this.blurProg, 'uRadius'), radius);
+    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uHorizontal'), 1);
+    drawFullscreenQuad(gl, this.vao);
+
+    // Vertical pass: texA → fboB
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboB);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.texA);
+    gl.uniform1f(gl.getUniformLocation(this.blurProg, 'uRadius'), radius);
+    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uHorizontal'), 0);
+    drawFullscreenQuad(gl, this.vao);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  render(layerSource: TexImageSource, bgSource: TexImageSource, params: LiquidGlassParams) {
+    const { gl } = this;
+    const sz = this.size;
+
+    // Compute blur radius in texel units (0 = no blur)
+    const blurRadius = params.blur * sz * 0.028;
+
+    // Always re-blur bg — each layer may have different blur strength,
+    // and the 2-pass Gaussian is fast enough to run per layer
+    this.blurBackground(bgSource, blurRadius);
+
+    // Upload layer texture
+    uploadSourceTexture(gl, this.layerTex, layerSource);
+
+    // ── Glass composite pass: render to screen ─────────────────────────────
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, sz, sz);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.glassProg);
+
+    const p = this.glassProg;
+    const texelSize = 1.0 / sz;
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.layerTex);
+    gl.uniform1i(gl.getUniformLocation(p, 'uLayerTex'), 0);
 
     gl.activeTexture(gl.TEXTURE1);
-    uploadTexture(gl, this.bgTex, bgSource);
-    gl.uniform1i(gl.getUniformLocation(program, 'uBackgroundTex'), 1);
+    gl.bindTexture(gl.TEXTURE_2D, this.texB);  // blurred bg
+    gl.uniform1i(gl.getUniformLocation(p, 'uBlurredBgTex'), 1);
 
-    gl.uniform1f(gl.getUniformLocation(program, 'uBlur'),        params.blur);
-    gl.uniform1f(gl.getUniformLocation(program, 'uTranslucency'), params.translucency);
-    gl.uniform1f(gl.getUniformLocation(program, 'uSpecular'),    params.specular ? params.specularIntensity : 0.0);
-    gl.uniform1f(gl.getUniformLocation(program, 'uOpacity'),     params.opacity);
-    gl.uniform1i(gl.getUniformLocation(program, 'uMode'),        params.mode);
-    gl.uniform1f(gl.getUniformLocation(program, 'uDarkAdjust'),  params.darkAdjust);
-    gl.uniform1f(gl.getUniformLocation(program, 'uMonoAdjust'),  params.monoAdjust);
-    gl.uniform1f(gl.getUniformLocation(program, 'uAberration'),  params.aberration);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.origBgTex);  // sharp bg
+    gl.uniform1i(gl.getUniformLocation(p, 'uOrigBgTex'), 2);
+
+    gl.uniform1f(gl.getUniformLocation(p, 'uBlur'),        params.blur);
+    gl.uniform1f(gl.getUniformLocation(p, 'uTranslucency'), params.translucency);
+    gl.uniform1f(gl.getUniformLocation(p, 'uSpecular'),    params.specular ? params.specularIntensity : 0.0);
+    gl.uniform1f(gl.getUniformLocation(p, 'uOpacity'),     params.opacity);
+    gl.uniform1i(gl.getUniformLocation(p, 'uMode'),        params.mode);
+    gl.uniform1f(gl.getUniformLocation(p, 'uDarkAdjust'),  params.darkAdjust);
+    gl.uniform1f(gl.getUniformLocation(p, 'uMonoAdjust'),  params.monoAdjust);
+    gl.uniform1f(gl.getUniformLocation(p, 'uAberration'),  params.aberration);
+    gl.uniform2f(gl.getUniformLocation(p, 'uTexelSize'),   texelSize, texelSize);
 
     const angleRad = (params.lightAngle * Math.PI) / 180;
-    gl.uniform2f(
-      gl.getUniformLocation(program, 'uLightDir'),
-      Math.cos(angleRad),
-      Math.sin(angleRad),
-    );
+    gl.uniform2f(gl.getUniformLocation(p, 'uLightDir'), Math.cos(angleRad), Math.sin(angleRad));
 
-    const posLoc = gl.getAttribLocation(program, 'aPosition');
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
-    gl.enableVertexAttribArray(posLoc);
-    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-
-    const uvLoc = gl.getAttribLocation(program, 'aTexCoord');
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
-    gl.enableVertexAttribArray(uvLoc);
-    gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 0, 0);
-
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    drawFullscreenQuad(gl, this.vao);
   }
 
   dispose() {
     const { gl } = this;
     gl.deleteTexture(this.layerTex);
-    gl.deleteTexture(this.bgTex);
-    gl.deleteBuffer(this.posBuffer);
-    gl.deleteBuffer(this.uvBuffer);
-    gl.deleteProgram(this.program);
+    gl.deleteTexture(this.origBgTex);
+    gl.deleteTexture(this.texA);
+    gl.deleteTexture(this.texB);
+    gl.deleteFramebuffer(this.fboA);
+    gl.deleteFramebuffer(this.fboB);
+    gl.deleteProgram(this.blurProg);
+    gl.deleteProgram(this.glassProg);
+    gl.deleteVertexArray(this.vao);
   }
 }

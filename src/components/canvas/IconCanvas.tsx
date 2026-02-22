@@ -4,6 +4,7 @@ import { $layers, $background, addLayer } from '../../store/iconStore';
 import { $appearanceMode, $lightAngle, $zoom, stepZoom } from '../../store/uiStore';
 import { renderIconToCanvas, exportIconPNG } from '../../engine/IconRenderer';
 import { drawSquirclePath } from '../../engine/ImageProcessor';
+import { BottomBar } from '../layout/BottomBar';
 
 const ICON_BASE_SIZE = 500; // px at 100% zoom
 
@@ -42,7 +43,7 @@ function IconShadow({ size, mode }: { size: number; mode: string }) {
         height: size,
         top: 0,
         left: 0,
-        filter: `drop-shadow(0 ${size * 0.04}px ${size * 0.1}px rgba(0,0,0,${mode === 'dark' || mode === 'clear-dark' ? 0.7 : 0.35}))`,
+        filter: `drop-shadow(0 ${size * 0.04}px ${size * 0.1}px rgba(0,0,0,${mode === 'dark' ? 0.7 : 0.35}))`,
         transform: 'translateZ(0)',
       }}
     >
@@ -92,6 +93,9 @@ export function IconCanvas() {
   const { over, handleDragOver, handleDragLeave, handleDrop } = useDragDrop();
 
   const iconSize = Math.round(ICON_BASE_SIZE * (zoom / 100));
+  // Render at physical pixel resolution for crisp display on retina screens (2× DPR)
+  const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
+  const renderSize = iconSize * dpr;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -104,13 +108,13 @@ export function IconCanvas() {
       background,
       lightAngle,
       appearanceMode: mode,
-      size: iconSize,
+      size: renderSize,
     }).then(() => {
       if (cancelled) return;
     });
 
     return () => { cancelled = true; };
-  }, [layers, background, lightAngle, mode, iconSize]);
+  }, [layers, background, lightAngle, mode, renderSize]);
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -135,14 +139,22 @@ export function IconCanvas() {
   }, [layers, background, lightAngle, mode]);
 
   const bgStyle = (() => {
-    if (mode === 'dark' || mode === 'clear-dark') {
+    if (mode === 'dark') {
       return { background: '#0a0a0f' };
     }
-    if (mode === 'tinted-dark') {
-      return { background: '#1a1a2e' };
-    }
-    if (mode === 'tinted-light') {
-      return { background: '#d0d0e8' };
+    if (mode === 'clear') {
+      // Dark checkered pattern (same as layer thumbnails) signals transparency
+      return {
+        backgroundColor: '#1e1e1e',
+        backgroundImage: [
+          'linear-gradient(45deg,#2e2e2e 25%,transparent 25%)',
+          'linear-gradient(-45deg,#2e2e2e 25%,transparent 25%)',
+          'linear-gradient(45deg,transparent 75%,#2e2e2e 75%)',
+          'linear-gradient(-45deg,transparent 75%,#2e2e2e 75%)',
+        ].join(','),
+        backgroundSize: '18px 18px',
+        backgroundPosition: '0 0,0 9px,9px -9px,-9px 0px',
+      };
     }
     if (background.type === 'gradient' && background.colors) {
       const toAlpha = (c: string) =>
@@ -179,23 +191,27 @@ export function IconCanvas() {
         </div>
       )}
 
+      {/* Outer container sized to iconSize; canvas always renders at ICON_BASE_SIZE
+          and is scaled via CSS so borders/effects stay proportional at all zoom levels. */}
       <div className="relative" style={{ width: iconSize, height: iconSize }}>
         <IconShadow size={iconSize} mode={mode} />
         <canvas
           ref={canvasRef}
-          width={iconSize}
-          height={iconSize}
+          width={renderSize}
+          height={renderSize}
           style={{
             width: iconSize,
             height: iconSize,
             position: 'relative',
             zIndex: 1,
-            borderRadius: '22.5%', // CSS approximation of squircle mask
+            borderRadius: '22.5%',
           }}
           className="block"
         />
         {showSafeArea && <SafeAreaOverlay size={iconSize} />}
       </div>
+
+      <BottomBar />
 
       {/* Toolbar strip at bottom */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/30 backdrop-blur-sm rounded-full px-3 py-1">

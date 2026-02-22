@@ -13,7 +13,7 @@ async function getCachedImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload  = () => { imageCache.set(url, img); resolve(img); };
+    img.onload = () => { imageCache.set(url, img); resolve(img); };
     img.onerror = reject;
     img.src = url;
   });
@@ -23,12 +23,19 @@ async function getCachedImage(url: string): Promise<HTMLImageElement> {
 
 let _glCanvas: HTMLCanvasElement | null = null;
 let _glRenderer: LiquidGlassRenderer | null = null;
+let _glSize = 0;
 
 function getWebGLRenderer(size: number): LiquidGlassRenderer | null {
   try {
     if (!_glCanvas) _glCanvas = document.createElement('canvas');
-    _glCanvas.width  = size;
-    _glCanvas.height = size;
+    // Recreate renderer if size changed (FBOs must match canvas size)
+    if (size !== _glSize) {
+      _glRenderer?.dispose();
+      _glRenderer = null;
+      _glCanvas.width = size;
+      _glCanvas.height = size;
+      _glSize = size;
+    }
     if (!_glRenderer) _glRenderer = new LiquidGlassRenderer(_glCanvas);
     return _glRenderer;
   } catch {
@@ -51,7 +58,7 @@ function blendModeToCanvas(mode: string): GlobalCompositeOperation {
 }
 
 function isDarkMode(mode: AppearanceMode): boolean {
-  return mode === 'dark' || mode === 'clear-dark' || mode === 'tinted-dark';
+  return mode === 'dark';
 }
 
 // ─── Canvas 2D Liquid Glass helper passes ─────────────────────────────────────
@@ -68,12 +75,12 @@ function drawDropShadow(
 ): void {
   if (!shadow.enabled || shadow.value <= 0) return;
 
-  const sv       = shadow.value / 100;
-  const blurPx   = sv * size * 0.05;
-  const offsetY  = sv * size * 0.022;
-  const alpha    = sv * 0.55;
+  const sv = shadow.value / 100;
+  const blurPx = sv * size * 0.05;
+  const offsetY = sv * size * 0.022;
+  const alpha = sv * 0.55;
 
-  if (shadow.type === 'chromatic') {
+  if ((shadow as any).type === 'chromatic') {
     // Two passes with colour-shifted offsets, blended with screen.
 
     // ── Blue/violet shadow ────────────────────────────────────────────────
@@ -145,7 +152,7 @@ function drawBorderGradient(
 
   // Full content → then erode interior
   bc.drawImage(contentCanvas, 0, 0);
-  const erode = Math.max(2, size * 0.011);
+  const erode = Math.max(1, size * 0.005);
   bc.globalCompositeOperation = 'destination-out';
   bc.drawImage(contentCanvas, erode / 2, erode / 2, size - erode, size - erode);
 
@@ -156,10 +163,10 @@ function drawBorderGradient(
   const gx2 = size * (0.5 - lx * 0.5);
   const gy2 = size * (0.5 - ly * 0.5);
   const bg = bc.createLinearGradient(gx1, gy1, gx2, gy2);
-  bg.addColorStop(0.00, 'rgba(255,255,255,0.95)');
-  bg.addColorStop(0.30, 'rgba(255,255,255,0.55)');
-  bg.addColorStop(0.65, 'rgba(255,255,255,0.22)');
-  bg.addColorStop(1.00, 'rgba(255,255,255,0.08)');
+  bg.addColorStop(0.00, 'rgba(255,255,255,0.55)');
+  bg.addColorStop(0.30, 'rgba(255,255,255,0.28)');
+  bg.addColorStop(0.65, 'rgba(255,255,255,0.10)');
+  bg.addColorStop(1.00, 'rgba(255,255,255,0.04)');
   bc.fillStyle = bg;
   bc.fillRect(0, 0, size, size);
 
@@ -184,12 +191,12 @@ async function renderLayerCanvas2D(
   layerOpacity: number,
   layerBlendMode: string,
 ): Promise<void> {
-  const dark         = isDarkMode(mode);
-  const angleRad     = (lightAngle * Math.PI) / 180;
-  const lx           = Math.cos(angleRad);
-  const ly           = -Math.sin(angleRad);
+  const dark = isDarkMode(mode);
+  const angleRad = (lightAngle * Math.PI) / 180;
+  const lx = Math.cos(angleRad);
+  const ly = -Math.sin(angleRad);
   const translucency = liquidGlass.translucency.enabled ? liquidGlass.translucency.value / 100 : 0.50;
-  const blurRadius   = liquidGlass.blur.enabled ? (liquidGlass.blur.value / 100) * 28 : 14;
+  const blurRadius = liquidGlass.blur.enabled ? (liquidGlass.blur.value / 100) * 28 : 14;
 
   // ── 1. Drop shadow ────────────────────────────────────────────────────────
   drawDropShadow(outCtx, contentCanvas, size, liquidGlass.shadow);
@@ -253,7 +260,7 @@ async function renderLayerCanvas2D(
     const specGrad = sc.createRadialGradient(hx, hy, 0, hx, hy, size * 0.58);
     for (let i = 0; i <= 14; i++) {
       const t = i / 14;
-      specGrad.addColorStop(t, `rgba(255,255,255,${(0.82 * Math.pow(1 - t, 5.0)).toFixed(3)})`);
+      specGrad.addColorStop(t, `rgba(255,255,255,${(0.48 * Math.pow(1 - t, 5.0)).toFixed(3)})`);
     }
     sc.fillStyle = specGrad;
     sc.fillRect(0, 0, size, size);
@@ -289,10 +296,10 @@ async function renderLayerCanvas2D(
     const rc = rimCanvas.getContext('2d')!;
 
     const rimGrad = rc.createLinearGradient(gx1, gy1, gx2, gy2);
-    rimGrad.addColorStop(0.00, 'rgba(255,255,255,0.60)');
-    rimGrad.addColorStop(0.22, 'rgba(255,255,255,0.18)');
+    rimGrad.addColorStop(0.00, 'rgba(255,255,255,0.30)');
+    rimGrad.addColorStop(0.22, 'rgba(255,255,255,0.09)');
     rimGrad.addColorStop(0.55, 'rgba(255,255,255,0.01)');
-    rimGrad.addColorStop(1.00, 'rgba(255,255,255,0.07)');
+    rimGrad.addColorStop(1.00, 'rgba(255,255,255,0.04)');
 
     rc.fillStyle = rimGrad;
     rc.fillRect(0, 0, size, size);
@@ -334,11 +341,16 @@ async function renderLayerCanvas2D(
 
 // ─── Build content canvas (fill + SVG) ───────────────────────────────────────
 
-async function buildContentCanvas(layer: Layer, size: number): Promise<HTMLCanvasElement> {
+async function buildContentCanvas(
+  layer: Layer,
+  size: number,
+  appearanceMode: AppearanceMode = 'default',
+): Promise<HTMLCanvasElement> {
   const { layout } = layer;
-  const scale   = layout.scale / 100;
+  const scale = layout.scale / 100;
   const offsetX = (layout.x / 100) * size;
   const offsetY = (layout.y / 100) * size;
+  const isClear = appearanceMode === 'clear';
 
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
@@ -349,32 +361,69 @@ async function buildContentCanvas(layer: Layer, size: number): Promise<HTMLCanva
   ctx.scale(scale, scale);
   ctx.translate(-size / 2, -size / 2);
 
-  if (layer.fill.type === 'solid') {
-    ctx.fillStyle = layer.fill.color ?? '#ffffff';
-    ctx.fillRect(0, 0, size, size);
-  } else if (layer.fill.type === 'gradient' && 'stops' in layer.fill) {
-    const grad = ctx.createLinearGradient(0, 0, 0, size);
-    layer.fill.stops.forEach((s) => grad.addColorStop(s.offset, s.color));
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, size, size);
-  }
-
   if (layer.blobUrl) {
+    // Image-based layer
     try {
       const img = await getCachedImage(layer.blobUrl);
-      const iw  = img.naturalWidth;
-      const ih  = img.naturalHeight;
-      const sc  = Math.min(size / iw, size / ih);
-      const w   = iw * sc;
-      const h   = ih * sc;
-      const x   = (size - w) / 2;
-      const y   = (size - h) / 2;
+      const iw = img.naturalWidth;
+      const ih = img.naturalHeight;
+      const sc = Math.min(size / iw, size / ih);
+      const w = iw * sc;
+      const h = ih * sc;
+      const x = (size - w) / 2;
+      const y = (size - h) / 2;
+
+      // Draw image first (establishes the alpha mask shape)
       ctx.drawImage(img, x, y, w, h);
+
+      // Apply fill / colour tint clipped to the image's alpha using source-atop.
+      // This ensures fill never bleeds outside the icon artwork shape.
+      ctx.globalCompositeOperation = 'source-atop';
+      if (isClear) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, size, size);
+      } else if (layer.fill.type === 'solid') {
+        ctx.fillStyle = layer.fill.color ?? '#ffffff';
+        ctx.fillRect(0, 0, size, size);
+      } else if (layer.fill.type === 'gradient' && 'stops' in layer.fill) {
+        const grad = ctx.createLinearGradient(0, 0, 0, size);
+        layer.fill.stops.forEach((s) => grad.addColorStop(s.offset, s.color));
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, size, size);
+      }
+      ctx.globalCompositeOperation = 'source-over';
     } catch { /* ignore broken blobs */ }
+  } else {
+    // Fill-only layer (no image) — fill defines the shape/colour
+    if (layer.fill.type === 'solid') {
+      ctx.fillStyle = isClear ? '#ffffff' : (layer.fill.color ?? '#ffffff');
+      ctx.fillRect(0, 0, size, size);
+    } else if (layer.fill.type === 'gradient' && 'stops' in layer.fill) {
+      if (isClear) {
+        ctx.fillStyle = '#ffffff';
+      } else {
+        const grad = ctx.createLinearGradient(0, 0, 0, size);
+        layer.fill.stops.forEach((s) => grad.addColorStop(s.offset, s.color));
+        ctx.fillStyle = grad;
+      }
+      ctx.fillRect(0, 0, size, size);
+    }
+    // fill.type === 'none' → nothing drawn → transparent layer
   }
 
   ctx.restore();
-  return canvas;
+
+  // ── Soft-edge pass: blur the content canvas by ~1px to smooth alpha edges ──
+  // This makes the WebGL edge/normal detection smooth instead of 1-bit staircase.
+  // At 1000px canvas a 0.8px blur is invisible to the eye but eliminates aliasing
+  // in the glass border glow and Fresnel rim.
+  const blurPx = Math.max(0.6, size * 0.0008);
+  const softCanvas = document.createElement('canvas');
+  softCanvas.width = softCanvas.height = size;
+  const sc = softCanvas.getContext('2d')!;
+  sc.filter = `blur(${blurPx}px)`;
+  sc.drawImage(canvas, 0, 0);
+  return softCanvas;
 }
 
 // ─── Render a single layer ────────────────────────────────────────────────────
@@ -388,12 +437,12 @@ async function renderLayerToCanvas(
 ): Promise<HTMLCanvasElement | null> {
   if (!layer.visible) return null;
 
-  const contentCanvas = await buildContentCanvas(layer, size);
+  const contentCanvas = await buildContentCanvas(layer, size, mode);
   const { liquidGlass } = layer;
 
   // ── Output canvas ─────────────────────────────────────────────────────────
-  const out    = document.createElement('canvas');
-  out.width    = out.height = size;
+  const out = document.createElement('canvas');
+  out.width = out.height = size;
   const outCtx = out.getContext('2d')!;
 
   if (!liquidGlass.enabled) {
@@ -411,22 +460,21 @@ async function renderLayerToCanvas(
   if (renderer && _glCanvas) {
     try {
       const glMode: 0 | 1 | 2 =
-        mode === 'dark'       ? 1
-        : (mode === 'tinted-light' || mode === 'tinted-dark' ||
-           mode === 'clear-light'  || mode === 'clear-dark') ? 2
-        : 0;
+        mode === 'dark' ? 1
+          : mode === 'clear' ? 2
+            : 0;
 
       const params: LiquidGlassParams = {
-        blur:             liquidGlass.blur.enabled        ? liquidGlass.blur.value / 100        : 0.35,
-        translucency:     liquidGlass.translucency.enabled ? liquidGlass.translucency.value / 100 : 0.55,
-        specular:         liquidGlass.specular,
+        blur: liquidGlass.blur.enabled ? liquidGlass.blur.value / 100 : 0.35,
+        translucency: liquidGlass.translucency.enabled ? liquidGlass.translucency.value / 100 : 0.55,
+        specular: liquidGlass.specular,
         specularIntensity: 1.0,
         lightAngle,
-        opacity:          layer.opacity / 100,
-        mode:             glMode,
-        darkAdjust:       liquidGlass.dark.enabled  ? liquidGlass.dark.value / 100  : 0,
-        monoAdjust:       liquidGlass.mono.enabled  ? liquidGlass.mono.value / 100  : 0,
-        aberration:       0.65, // always-on chromatic aberration at moderate intensity
+        opacity: layer.opacity / 100,
+        mode: glMode,
+        darkAdjust: liquidGlass.dark.enabled ? liquidGlass.dark.value / 100 : 0,
+        monoAdjust: liquidGlass.mono.enabled ? liquidGlass.mono.value / 100 : 0,
+        aberration: 0.65, // always-on chromatic aberration at moderate intensity
       };
 
       renderer.render(contentCanvas, bgCanvas, params);
@@ -439,9 +487,6 @@ async function renderLayerToCanvas(
       outCtx.globalCompositeOperation = blendModeToCanvas(layer.blendMode);
       outCtx.drawImage(_glCanvas, 0, 0);
       outCtx.restore();
-
-      // ── Border gradient on top of WebGL result ────────────────────────────
-      drawBorderGradient(outCtx, contentCanvas, size, lightAngle);
 
       return out;
     } catch {
@@ -458,18 +503,6 @@ async function renderLayerToCanvas(
   return out;
 }
 
-// ─── Mono/greyscale filter ────────────────────────────────────────────────────
-
-function applyMonoFilter(canvas: HTMLCanvasElement): void {
-  const ctx = canvas.getContext('2d')!;
-  const id  = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const d   = id.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-    d[i] = d[i + 1] = d[i + 2] = g;
-  }
-  ctx.putImageData(id, 0, 0);
-}
 
 // ─── Main compositor ──────────────────────────────────────────────────────────
 
@@ -486,31 +519,33 @@ export async function renderIconToCanvas(
 
   // Build base background canvas
   const bgCanvas = createBackgroundCanvas(background as any, size, size);
-  const bgCtx    = bgCanvas.getContext('2d')!;
+  const bgCtx = bgCanvas.getContext('2d')!;
 
   // Apply mode-specific background overlay
-  const modeOverlays: Partial<Record<AppearanceMode, () => void>> = {
-    dark:         () => { bgCtx.fillStyle = 'rgba(0,0,0,0.55)';          bgCtx.fillRect(0, 0, size, size); },
-    'tinted-light': () => {
-      const hue = (background as any).hue ?? 220;
-      bgCtx.fillStyle = `hsla(${hue},28%,82%,0.88)`;
-      bgCtx.fillRect(0, 0, size, size);
-    },
-    'tinted-dark': () => {
-      const hue = (background as any).hue ?? 220;
-      bgCtx.fillStyle = `hsla(${hue},22%,16%,0.92)`;
-      bgCtx.fillRect(0, 0, size, size);
-    },
-    'clear-light': () => { bgCtx.fillStyle = 'rgba(235,235,240,0.85)'; bgCtx.fillRect(0, 0, size, size); },
-    'clear-dark':  () => { bgCtx.fillStyle = 'rgba(28,28,30,0.85)';    bgCtx.fillRect(0, 0, size, size); },
-  };
-  modeOverlays[appearanceMode]?.();
+  if (appearanceMode === 'dark') {
+    bgCtx.fillStyle = 'rgba(0,0,0,0.55)';
+    bgCtx.fillRect(0, 0, size, size);
+  }
 
-  // ── Squircle drop shadow (drawn before clip, will be covered by icon body) ──
-  {
+  // For glass blur in clear mode, use a neutral light background (simulates wallpaper)
+  // The actual icon composite will be on transparent — bgCanvas only feeds the glass blur
+  const glassBgCanvas = appearanceMode === 'clear'
+    ? (() => {
+        const cb = document.createElement('canvas');
+        cb.width = cb.height = size;
+        const cc = cb.getContext('2d')!;
+        cc.fillStyle = 'rgba(230,230,235,1)';
+        cc.fillRect(0, 0, size, size);
+        return cb;
+      })()
+    : bgCanvas;
+
+
+  // ── Squircle drop shadow (default/dark only — clear mode exports as transparent PNG) ──
+  if (appearanceMode !== 'clear') {
     c.save();
-    c.shadowColor   = 'rgba(0,0,28,0.48)';
-    c.shadowBlur    = size * 0.055;
+    c.shadowColor = 'rgba(0,0,28,0.48)';
+    c.shadowBlur = size * 0.055;
     c.shadowOffsetX = 0;
     c.shadowOffsetY = size * 0.022;
     drawSquirclePath(c, 0, 0, size);
@@ -524,8 +559,10 @@ export async function renderIconToCanvas(
   drawSquirclePath(c, 0, 0, size);
   c.clip();
 
-  // Draw background
-  c.drawImage(bgCanvas, 0, 0, size, size);
+  // Draw background — clear mode has transparent bg (only glass blur uses bgCanvas)
+  if (appearanceMode !== 'clear') {
+    c.drawImage(bgCanvas, 0, 0, size, size);
+  }
 
   // Sort and composite layers
   const rootLayers = [...layers]
@@ -544,7 +581,7 @@ export async function renderIconToCanvas(
       const gc = groupCanvas.getContext('2d')!;
 
       for (const child of children) {
-        const lc = await renderLayerToCanvas(child, size, appearanceMode, lightAngle, bgCanvas);
+        const lc = await renderLayerToCanvas(child, size, appearanceMode, lightAngle, glassBgCanvas);
         if (lc) gc.drawImage(lc, 0, 0);
       }
 
@@ -552,46 +589,123 @@ export async function renderIconToCanvas(
       c.drawImage(groupCanvas, 0, 0);
       c.globalAlpha = 1;
     } else {
-      const lc = await renderLayerToCanvas(layer, size, appearanceMode, lightAngle, bgCanvas);
+      const lc = await renderLayerToCanvas(layer, size, appearanceMode, lightAngle, glassBgCanvas);
       if (lc) c.drawImage(lc, 0, 0);
     }
   }
 
   c.restore(); // end squircle clip
 
-  // ── Squircle rim / border (drawn after clip is released) ──────────────────
+  // ── Squircle glass rim — 3 passes for physical 3D depth ───────────────────
   {
-    const angleRad = (lightAngle * Math.PI) / 180;
-    const lx = Math.cos(angleRad);
-    const ly = -Math.sin(angleRad);
-
     c.save();
-    drawSquirclePath(c, 0, 0, size);
+    // 1. Broad outer rim (base reflection)
+    {
+      const angleRad = (lightAngle * Math.PI) / 180;
+      const lx = Math.cos(angleRad);
+      const ly = -Math.sin(angleRad);
 
-    const rimGrad = c.createLinearGradient(
-      size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
-      size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
-    );
-    rimGrad.addColorStop(0.00, 'rgba(255,255,255,0.82)');
-    rimGrad.addColorStop(0.28, 'rgba(255,255,255,0.42)');
-    rimGrad.addColorStop(0.60, 'rgba(255,255,255,0.12)');
-    rimGrad.addColorStop(1.00, 'rgba(255,255,255,0.05)');
+      const rimGrad = c.createLinearGradient(
+        size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
+        size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5)
+      );
+      rimGrad.addColorStop(0.00, 'rgba(255,255,255,0.72)');
+      rimGrad.addColorStop(0.35, 'rgba(255,255,255,0.30)');
+      rimGrad.addColorStop(0.65, 'rgba(255,255,255,0.08)');
+      rimGrad.addColorStop(1.00, 'rgba(255,255,255,0.0)');
 
-    c.strokeStyle = rimGrad;
-    c.lineWidth   = Math.max(1.5, size * 0.002);
-    c.stroke();
+      drawSquirclePath(c, 0, 0, size);
+      c.strokeStyle = rimGrad;
+      c.lineWidth = Math.max(1.5, size * 0.002);
+      c.stroke();
+    }
+
+    // 2. Focused inner specular glare (intense light source reflection)
+    {
+      const angleRad = (lightAngle * Math.PI) / 180;
+      // Slightly offset the glare angle to simulate volume
+      const lx = Math.cos(angleRad + 0.15);
+      const ly = -Math.sin(angleRad + 0.15);
+
+      const glareGrad = c.createLinearGradient(
+        size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
+        size * 0.5, size * 0.5 // Glare fades out quickly towards center
+      );
+      glareGrad.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+      glareGrad.addColorStop(0.12, 'rgba(255,255,255,0.40)');
+      glareGrad.addColorStop(0.30, 'rgba(255,255,255,0.0)');
+
+      // Draw slightly inset
+      c.translate(size * -lx * 0.003, size * -ly * 0.003);
+      drawSquirclePath(c, 0, 0, size);
+      c.strokeStyle = glareGrad;
+      c.lineWidth = Math.max(1.0, size * 0.0015);
+      c.globalCompositeOperation = 'screen';
+      c.stroke();
+      c.translate(size * lx * 0.003, size * ly * 0.003);
+    }
+
+    // 3. Inner shadow on the opposite side (volume occlusion)
+    {
+      const angleRad = (lightAngle * Math.PI) / 180;
+      const lx = Math.cos(angleRad);
+      const ly = -Math.sin(angleRad);
+
+      // Gradient starts from the DARK side (opposite of light)
+      const shadowGrad = c.createLinearGradient(
+        size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
+        size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5)
+      );
+      shadowGrad.addColorStop(0.00, 'rgba(0,0,20,0.45)');
+      shadowGrad.addColorStop(0.30, 'rgba(0,0,20,0.15)');
+      shadowGrad.addColorStop(0.60, 'rgba(0,0,20,0.0)');
+
+      // Draw slightly zoomed in so the shadow rests inside the rim
+      const scale = 0.995;
+      const offset = size * (1 - scale) / 2;
+      c.translate(offset, offset);
+      c.scale(scale, scale);
+
+      drawSquirclePath(c, 0, 0, size);
+      c.strokeStyle = shadowGrad;
+      c.lineWidth = Math.max(2.5, size * 0.004);
+      c.globalCompositeOperation = 'multiply';
+      c.stroke();
+    }
     c.restore();
   }
 
-  // Apply mono/greyscale filter for tinted and clear variants
-  if (
-    appearanceMode === 'tinted-light' ||
-    appearanceMode === 'tinted-dark'  ||
-    appearanceMode === 'clear-light'  ||
-    appearanceMode === 'clear-dark'
-  ) {
-    applyMonoFilter(outputCanvas);
+  // ── Soft edge feather — erases 1-2px outside squircle to anti-alias the clip ──
+  // Uses destination-out on a slightly EXPANDED squircle inverted mask.
+  // This removes hard pixel steps at the squircle boundary.
+  {
+    const featherCanvas = document.createElement('canvas');
+    featherCanvas.width = featherCanvas.height = size;
+    const fc = featherCanvas.getContext('2d')!;
+
+    // Punch a squircle hole inside — everything outside the squircle stays
+    fc.fillStyle = '#000000';
+    fc.fillRect(0, 0, size, size);
+    fc.globalCompositeOperation = 'destination-out';
+    drawSquirclePath(fc, 0, 0, size);
+    fc.fill();
+
+    // Apply a tiny blur to this mask so the inverted edge is feathered
+    const featherPx = Math.max(1, size * 0.0015);
+    fc.filter = `blur(${featherPx}px)`;
+    // Re-draw to apply blur (we use a second canvas pass)
+    const blurCanvas = document.createElement('canvas');
+    blurCanvas.width = blurCanvas.height = size;
+    const bc = blurCanvas.getContext('2d')!;
+    bc.filter = `blur(${featherPx}px)`;
+    bc.drawImage(featherCanvas, 0, 0);
+
+    c.save();
+    c.globalCompositeOperation = 'destination-out';
+    c.drawImage(blurCanvas, 0, 0);
+    c.restore();
   }
+
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────
@@ -605,6 +719,7 @@ export async function exportIconPNG(
 ): Promise<string> {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
+  // Use appearanceMode, not 'mode', to fix the compile error that broke export
   await renderIconToCanvas(canvas, { layers, background, lightAngle, appearanceMode: mode, size });
   return canvas.toDataURL('image/png');
 }

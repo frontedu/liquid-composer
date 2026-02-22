@@ -16,8 +16,8 @@ export type BlendMode =
   | 'color'
   | 'luminosity';
 
-// Apple HIG defines 6 modes for iOS 26: Default, Dark, Clear (light), Clear (dark), Tinted (light), Tinted (dark).
-export type AppearanceMode = 'default' | 'dark' | 'clear-light' | 'clear-dark' | 'tinted-light' | 'tinted-dark';
+// Apple Icon Composer 2025 defines 3 modes: Default, Dark, Clear.
+export type AppearanceMode = 'default' | 'dark' | 'clear';
 
 export interface ColorStop {
   offset: number; // 0-1
@@ -38,10 +38,15 @@ export interface LiquidGlassConfig {
   dark: { enabled: boolean; value: number };
   mono: { enabled: boolean; value: number };
   shadow: {
-    type: 'neutral' | 'chromatic';
     enabled: boolean;
     value: number;
+    type?: 'chromatic' | 'neutral';
   };
+  // SDF-based rendering parameters (all optional — defaults in renderer)
+  refraction?: { enabled: boolean; thickness: number; factor: number; dispersion: number };
+  fresnel?: { enabled: boolean; range: number; factor: number; hardness: number };
+  glare?: { enabled: boolean; range: number; convergence: number; factor: number; angle: number };
+  tint?: { r: number; g: number; b: number; a: number };
 }
 
 export interface LayerLayout {
@@ -75,8 +80,9 @@ export interface BackgroundConfig {
   color?: string;
   colors?: [string, string]; // gradient start/end
   angle?: number;
-  hue?: number;  // 0–360, used by the hue/tint picker
-  tint?: number; // 0–100, 0 = vibrant, 100 = very pale
+  hue?: number;        // 0–360
+  tint?: number;       // 0–100, 0 = vibrant, 100 = very pale
+  brightness?: number; // 0–100, 0 = black, 100 = full brightness (default 100)
 }
 
 export interface AppearanceOverride {

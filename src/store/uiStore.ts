@@ -3,9 +3,23 @@ import type { AppearanceMode } from '../types/index';
 
 export const ZOOM_LEVELS = [25, 50, 75, 100, 150, 200] as const;
 
+export const LIGHT_ANGLE_LEVELS = [90, 45, 0, 315, 270, 225, 180, 135] as const;
+export type LightAngleLevel = typeof LIGHT_ANGLE_LEVELS[number];
+
+export const LIGHT_ANGLE_LABELS: Record<number, string> = {
+   '90': 'Top',
+   '45': 'Top Right',
+    '0': 'Right',
+  '315': 'Bottom Right',
+  '270': 'Bottom',
+  '225': 'Bottom Left',
+  '180': 'Left',
+  '135': 'Top Left',
+};
+
 export const $selectedLayerId = atom<string | null>(null);
 export const $appearanceMode = atom<AppearanceMode>('default');
-export const $lightAngle = atom<number>(-45);
+export const $lightAngle = atom<number>(135);
 export const $zoom = atom<number>(50);
 export const $inspectorTab = atom<'brush' | 'document'>('brush');
 export const $isDragOver = atom<boolean>(false);
