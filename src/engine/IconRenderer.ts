@@ -5,6 +5,74 @@ import { LiquidGlassRenderer } from './LiquidGlass';
 import type { LiquidGlassParams } from './LiquidGlass';
 import { setWebgl2Status, setWebgl2Error } from '../store/uiStore';
 
+// [1] INNER SPECULAR DOME — soft light filling the layer interior on the lit side
+const LAYER_DOME_INTENSITY        = 0.90;  // overall strength
+const LAYER_DOME_CENTER_ALPHA     = 0.26;  // brightness at the brightest point
+const LAYER_DOME_MID_ALPHA        = 0.14;  // brightness halfway across
+const LAYER_DOME_EDGE_ALPHA       = 0.1;  // brightness near the edge before fading out
+const LAYER_DOME_RADIUS           = 0.85;  // dome coverage (× size, 0–1)
+const LAYER_DOME_BLUR_BASE        = 0.022; // softness — higher = more diffuse (× size)
+
+// [2] INNER COLORED RIM — thin ring inside the layer edge, tinted with the layer color
+// Wraps all the way around: brighter on lit side, softer on shadow side.
+const LAYER_INNER_RIM_WIDTH       = 0.026; // rim thickness (× size)
+const LAYER_INNER_RIM_LIT_ALPHA   = 0.65;  // intensity on lit side
+const LAYER_INNER_RIM_MID_ALPHA   = 0.50;  // intensity in the middle
+const LAYER_INNER_RIM_SHADOW_ALPHA= 0.22;  // intensity on shadow side (0 = disappears)
+const LAYER_INNER_RIM_BLUR        = 0.0015;// softness (× size) — keep small for sharp edge
+const LAYER_INNER_RIM_ALPHA_BLUR  = 0.80;  // opacity of the blurred pass
+const LAYER_INNER_RIM_ALPHA_SHARP = 0.45;  // opacity of the sharp pass layered on top
+// Same rim applied to interior transparent holes (e.g. ⌘ cutouts)
+const LAYER_HOLES_RIM_ALPHA_BLUR  = 0.80;
+const LAYER_HOLES_RIM_ALPHA_SHARP = 0.45;
+
+// [4] INNER SHADOW — darkens the inner edge on the shadow side (concave depth)
+const LAYER_INNER_SHADOW_WIDTH       = 0.016; // shadow band thickness (× size)
+const LAYER_INNER_SHADOW_DARK_ALPHA  = 0.30;  // darkest point
+const LAYER_INNER_SHADOW_MID_ALPHA   = 0.12;  // midpoint
+const LAYER_INNER_SHADOW_BLUR        = 0.003;  // softness (× size)
+const LAYER_INNER_SHADOW_ALPHA_BLUR  = 0.80;  // opacity of blurred pass
+const LAYER_INNER_SHADOW_ALPHA_SHARP = 0.30;  // opacity of sharp pass
+
+// [5] OUTER BORDER — thin ring outside the layer shape, colored with the layer's own color
+const LAYER_OUTER_BORDER_WIDTH    = 0.002; // border thickness (× size)
+const LAYER_OUTER_BORDER_ALPHA    = 0.55;  // border opacity
+
+// [6] SPECULAR HIGHLIGHT — white radial glow clipped to the lit edge of the layer
+// Only visible on the lit corner. Radius controls how far it spreads inward.
+const LAYER_SPECULAR_RADIUS       = 0.24;  // spread from lit corner (× size)
+const LAYER_SPECULAR_PEAK_ALPHA   = 0.40;  // brightness at the center
+
+// [7] FRESNEL RIM — white gradient across the whole layer (lit → shadow)
+// Subtle overall sheen that simulates light grazing the glass surface.
+const LAYER_FRESNEL_LIT_ALPHA     = 0.30;  // brightness on lit side
+const LAYER_FRESNEL_MID_ALPHA     = 0.09;  // brightness in the middle
+const LAYER_FRESNEL_SHADOW_ALPHA  = 0.04;  // brightness on shadow side
+
+// [8] INSET TOP HIGHLIGHT — 1px white line at the very top edge of the layer
+// Simulates the top bevel of a physical button catching overhead light.
+const LAYER_INSET_ALPHA           = 0.22;  // line brightness
+
+// [9] EDGE INNER GLOW — warm/cool luminous band just inside the layer edges
+// Color is warm (light mode) or cool blue (dark mode).
+const LAYER_INNER_GLOW_WIDTH      = 0.015; // glow band width (× size)
+const LAYER_INNER_GLOW_LIT_ALPHA  = 0.35;  // brightness at the lit corner
+const LAYER_INNER_GLOW_MID_ALPHA  = 0.15;  // brightness midway
+const LAYER_INNER_GLOW_EDGE_ALPHA = 0.04;  // brightness near shadow edge
+
+// [10] SHADOW SIDE DIMMING — darkens the shadow half of the layer content
+// Increases perceived curvature/depth.
+const LAYER_DIM_SHADOW_ALPHA      = 0.12;  // max darkening on shadow side (scales with translucency)
+
+// [11] DIRECTIONAL INNER SHADOW — dark gradient inside layer on the shadow side
+// Heavier in dark mode. Adds the deepest concave shadow feel.
+const LAYER_DIR_SHADOW_MID_LIGHT  = 0.06;  // midpoint darkness in light mode
+const LAYER_DIR_SHADOW_MAX_LIGHT  = 0.18;  // max darkness in light mode
+const LAYER_DIR_SHADOW_MID_DARK   = 0.78;  // midpoint darkness in dark mode
+const LAYER_DIR_SHADOW_MAX_DARK   = 0.15;  // max darkness in dark mode
+
+// =============================================================================
+
 // ─── Image cache ──────────────────────────────────────────────────────────────
 
 const imageCache = new Map<string, HTMLImageElement>();
@@ -346,14 +414,6 @@ function drawDropShadow(
 
 }
 
-/**
- * 3D bevel edge for individual layers — two passes:
- *  1. Inner bright rim  — eroded ring colored white on the lit side (screen)
- *  2. Dark outer border — dilated-minus-original ring darkened on shadow side (multiply)
- *
- * Together they produce the characteristic liquid glass "raised button" depth
- * on arbitrary layer shapes, independent of the squircle container rim.
- */
 function drawLayerBevel(
   outCtx: CanvasRenderingContext2D,
   contentCanvas: HTMLCanvasElement,
@@ -365,195 +425,187 @@ function drawLayerBevel(
   const angleRad = (lightAngle * Math.PI) / 180;
   const lx = Math.cos(angleRad);
   const ly = -Math.sin(angleRad);
-
-  // Both rings are built as INSET erosions so their outer edge is always the
-  // content's own alpha boundary (already AA from buildContentCanvas soft-blur).
-  // This guarantees zero aliasing on the outer edge of both rings.
-  // Only the inner edge of each ring needs a blur, which we apply to the erode
-  // mask BEFORE subtraction — never to the colored result (avoids ghosting).
   const blurT = liquidGlass.blur?.enabled ? liquidGlass.blur.value / 100 : 0;
-  const transT = mapTranslucency(
-    liquidGlass.translucency?.value ?? 55,
-    !!liquidGlass.translucency?.enabled,
-    0.55,
-  );
-  // Thicker, softer rims for Liquid Glass layers (more depth, less "rigid")
-  const bevelWidth = size * (0.018 + blurT * 0.014 + (1 - transT) * 0.007);
-  const erodeRim  = Math.max(3.5, bevelWidth);
-  const erodeDark = Math.max(2.6, bevelWidth * 0.7);
-  // Stronger baseline blur so the rim is visibly soft even with blur=0
-  const rimBlur  = Math.max(3.4, size * 0.0042 + blurT * size * 0.006);
-  const darkBlur = Math.max(2.0, size * 0.0030 + blurT * size * 0.0035);
 
-  // ── Pass 1: Inner bright rim (lit side, convex curved gradient) ───────────
+  // Sample dominant color of the layer (for rim tinting).
+  // Averaged from a 16×16 downsample, mixed 55% toward white for highlight feel.
+  const layerColor = (() => {
+    const s = 16;
+    const tmp = document.createElement('canvas');
+    tmp.width = tmp.height = s;
+    const tc = tmp.getContext('2d')!;
+    tc.drawImage(contentCanvas, 0, 0, s, s);
+    const data = tc.getImageData(0, 0, s, s).data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] > 60) { r += data[i]; g += data[i + 1]; b += data[i + 2]; n++; }
+    }
+    if (n === 0) return { r: 255, g: 255, b: 255 };
+    r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+    const mix = 0.55;
+    return {
+      r: Math.round(r + (255 - r) * mix),
+      g: Math.round(g + (255 - g) * mix),
+      b: Math.round(b + (255 - b) * mix),
+    };
+  })();
+  const lc = (a: number) => `rgba(${layerColor.r},${layerColor.g},${layerColor.b},${a})`;
+
+  // ── [1] ESPECULAR INTERNO ─────────────────────────────────────────────────
   {
-    const { canvas: ringCanvas, ctx: rc } = scratch.getCanvas('bevel-rim', size);
-
-    // Outer edge = content boundary (AA inherited, no extra work needed)
-    rc.drawImage(contentCanvas, 0, 0);
-
-    // Inner edge = eroded content blurred → smooth fade into glass body
-    const { canvas: innerMask, ctx: im } = scratch.getCanvas('bevel-rim-mask', size);
-    im.filter = `blur(${Math.max(1.5, erodeRim * 0.575)}px)`;
-    im.drawImage(contentCanvas, erodeRim / 2, erodeRim / 2, size - erodeRim, size - erodeRim);
-    rc.globalCompositeOperation = 'destination-out';
-    rc.drawImage(innerMask, 0, 0);
-
-    // Curved surface gradient: convex highlight that tapers off naturally
-    // Uses both a radial glow from the lit corner AND a directional gradient
-    rc.globalCompositeOperation = 'source-in';
-
-    // Primary: radial glow from lit corner (convex catch-light)
-    // Radius kept tight (0.38) so the glow stays near the lit edge, not flooding the interior
-    const litCornerX = size * (0.5 + lx * 0.45);
-    const litCornerY = size * (0.5 + ly * 0.45);
-    const radGrad = rc.createRadialGradient(litCornerX, litCornerY, 0, litCornerX, litCornerY, size * 0.38);
-    radGrad.addColorStop(0.00, 'rgba(255,255,255,0.22)');
-    radGrad.addColorStop(0.20, 'rgba(255,255,255,0.10)');
-    radGrad.addColorStop(0.50, 'rgba(255,255,255,0.02)');
-    radGrad.addColorStop(1.00, 'rgba(255,255,255,0.00)');
-    rc.fillStyle = radGrad;
-    rc.fillRect(0, 0, size, size);
-
-    // Secondary: subtle directional gradient for falloff continuity
-    rc.globalCompositeOperation = 'lighter';
-    const litGrad = rc.createLinearGradient(
-      size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
-      size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
-    );
-    litGrad.addColorStop(0.00, 'rgba(255,255,255,0.06)');
-    litGrad.addColorStop(0.25, 'rgba(255,255,255,0.02)');
-    litGrad.addColorStop(0.60, 'rgba(255,255,255,0.00)');
-    litGrad.addColorStop(1.00, 'rgba(255,255,255,0.00)');
-    rc.fillStyle = litGrad;
-    rc.fillRect(0, 0, size, size);
-
-    // Soft blur pass for inner rim (visible softness)
+    const { canvas: domeCv, ctx: dc } = scratch.getCanvas('layer-dome', size);
+    dc.drawImage(contentCanvas, 0, 0);
+    dc.globalCompositeOperation = 'source-in';
+    const litX = size * (0.5 + lx * 0.42);
+    const litY = size * (0.5 + ly * 0.42);
+    const grad = dc.createRadialGradient(litX, litY, 0, litX, litY, size * LAYER_DOME_RADIUS);
+    grad.addColorStop(0.00, `rgba(255,255,255,${LAYER_DOME_CENTER_ALPHA})`);
+    grad.addColorStop(0.18, `rgba(255,255,255,${LAYER_DOME_MID_ALPHA})`);
+    grad.addColorStop(0.45, `rgba(255,255,255,${LAYER_DOME_EDGE_ALPHA})`);
+    grad.addColorStop(0.70, 'rgba(255,255,255,0.00)');
+    grad.addColorStop(1.00, 'rgba(255,255,255,0.00)');
+    dc.fillStyle = grad;
+    dc.fillRect(0, 0, size, size);
+    const blur = Math.max(6, size * LAYER_DOME_BLUR_BASE + blurT * size * 0.018);
     outCtx.save();
     outCtx.globalCompositeOperation = 'screen';
-    outCtx.globalAlpha = 0.50;
-    outCtx.filter = `blur(${rimBlur}px)`;
-    outCtx.drawImage(ringCanvas, 0, 0);
+    outCtx.globalAlpha = LAYER_DOME_INTENSITY;
+    outCtx.filter = `blur(${blur}px)`;
+    outCtx.drawImage(domeCv, 0, 0);
     outCtx.filter = 'none';
-    outCtx.globalAlpha = 0.18;
-    outCtx.drawImage(ringCanvas, 0, 0);
     outCtx.restore();
   }
 
-  // ── Pass 1b: Thin sharp inner ridge (adds crisp 3D edge without blur)
+  // ── [2] BORDA INTERNA COLORIDA (+ buracos internos) ──────────────────────
   {
-    const crispWidth = Math.max(1.2, bevelWidth * 0.4);
-    const { canvas: sharpCanvas, ctx: sc } = scratch.getCanvas('bevel-rim-sharp', size);
+    const rimW = Math.max(3, size * LAYER_INNER_RIM_WIDTH + blurT * size * 0.010);
+    const blur = Math.max(0.6, size * LAYER_INNER_RIM_BLUR);
 
-    sc.drawImage(contentCanvas, 0, 0);
+    const buildRimCanvas = (srcCanvas: HTMLCanvasElement, key: string, maskKey: string) => {
+      const { canvas: rimCv, ctx: rc } = scratch.getCanvas(key, size);
+      rc.drawImage(srcCanvas, 0, 0);
+      const { canvas: mask, ctx: mc } = scratch.getCanvas(maskKey, size);
+      mc.filter = `blur(${Math.max(1.2, rimW * 0.38)}px)`;
+      mc.drawImage(srcCanvas, rimW / 2, rimW / 2, size - rimW, size - rimW);
+      rc.globalCompositeOperation = 'destination-out';
+      rc.drawImage(mask, 0, 0);
+      rc.globalCompositeOperation = 'source-in';
+      const grad = rc.createLinearGradient(
+        size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
+        size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
+      );
+      grad.addColorStop(0.00, lc(LAYER_INNER_RIM_LIT_ALPHA));
+      grad.addColorStop(0.40, lc(LAYER_INNER_RIM_MID_ALPHA));
+      grad.addColorStop(0.70, lc(LAYER_INNER_RIM_SHADOW_ALPHA + 0.10));
+      grad.addColorStop(1.00, lc(LAYER_INNER_RIM_SHADOW_ALPHA));
+      rc.fillStyle = grad;
+      rc.fillRect(0, 0, size, size);
+      return rimCv;
+    };
 
-    const { canvas: sharpMask, ctx: sm } = scratch.getCanvas('bevel-rim-sharp-mask', size);
-    sm.filter = `blur(${Math.max(0.8, crispWidth * 0.35)}px)`;
-    sm.drawImage(contentCanvas, crispWidth / 2, crispWidth / 2, size - crispWidth, size - crispWidth);
-    sc.globalCompositeOperation = 'destination-out';
-    sc.drawImage(sharpMask, 0, 0);
-
-    sc.globalCompositeOperation = 'source-in';
-    const sharpGrad = sc.createLinearGradient(
-      size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
-      size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
-    );
-    sharpGrad.addColorStop(0.00, 'rgba(255,255,255,0.35)');
-    sharpGrad.addColorStop(0.20, 'rgba(255,255,255,0.14)');
-    sharpGrad.addColorStop(0.50, 'rgba(255,255,255,0.02)');
-    sharpGrad.addColorStop(1.00, 'rgba(255,255,255,0.00)');
-    sc.fillStyle = sharpGrad;
-    sc.fillRect(0, 0, size, size);
-
+    // Outer shape rim
+    const rimCv = buildRimCanvas(contentCanvas, 'layer-rim', 'layer-rim-mask');
     outCtx.save();
     outCtx.globalCompositeOperation = 'screen';
-    outCtx.globalAlpha = 0.45;
+    outCtx.globalAlpha = LAYER_INNER_RIM_ALPHA_BLUR;
+    outCtx.filter = `blur(${blur}px)`;
+    outCtx.drawImage(rimCv, 0, 0);
     outCtx.filter = 'none';
-    outCtx.drawImage(sharpCanvas, 0, 0);
+    outCtx.globalAlpha = LAYER_INNER_RIM_ALPHA_SHARP;
+    outCtx.drawImage(rimCv, 0, 0);
     outCtx.restore();
+
+    // Interior holes rim (transparent cutouts inside the shape)
+    {
+      const { canvas: holeCv, ctx: hc } = scratch.getCanvas('layer-holes', size);
+      hc.fillStyle = 'rgba(255,255,255,1)';
+      hc.fillRect(0, 0, size, size);
+      hc.globalCompositeOperation = 'destination-out';
+      hc.drawImage(contentCanvas, 0, 0);
+      const { canvas: holeMask, ctx: hm } = scratch.getCanvas('layer-holes-mask', size);
+      hm.filter = `blur(${Math.max(1.2, rimW * 0.38)}px)`;
+      hm.drawImage(holeCv, rimW / 2, rimW / 2, size - rimW, size - rimW);
+      hc.globalCompositeOperation = 'destination-out';
+      hc.drawImage(holeMask, 0, 0);
+      // Clip to dilated content — removes exterior transparent area
+      const { canvas: dilCv, ctx: dc } = scratch.getCanvas('layer-holes-dilate', size);
+      const dpad = rimW * 1.2;
+      dc.filter = `blur(${rimW * 0.6}px)`;
+      dc.drawImage(contentCanvas, -dpad, -dpad, size + dpad * 2, size + dpad * 2);
+      dc.filter = 'none';
+      hc.globalCompositeOperation = 'destination-in';
+      hc.drawImage(dilCv, 0, 0);
+      // Color same as outer rim
+      const grad = hc.createLinearGradient(
+        size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
+        size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
+      );
+      grad.addColorStop(0.00, lc(LAYER_INNER_RIM_LIT_ALPHA));
+      grad.addColorStop(0.40, lc(LAYER_INNER_RIM_MID_ALPHA));
+      grad.addColorStop(1.00, lc(LAYER_INNER_RIM_SHADOW_ALPHA));
+      hc.globalCompositeOperation = 'source-in';
+      hc.fillStyle = grad;
+      hc.fillRect(0, 0, size, size);
+      outCtx.save();
+      outCtx.globalCompositeOperation = 'screen';
+      outCtx.globalAlpha = LAYER_HOLES_RIM_ALPHA_BLUR;
+      outCtx.filter = `blur(${blur}px)`;
+      outCtx.drawImage(holeCv, 0, 0);
+      outCtx.filter = 'none';
+      outCtx.globalAlpha = LAYER_HOLES_RIM_ALPHA_SHARP;
+      outCtx.drawImage(holeCv, 0, 0);
+      outCtx.restore();
+    }
   }
 
-  // ── Pass 2: Dark outer border (shadow side, concave curved gradient) ─────
-  // Non-linear (cubic) falloff for more natural shadow appearance
+  // ── [4] SOMBRA INTERNA NO LADO SHADOW ────────────────────────────────────
   {
-    const { canvas: ringCanvas, ctx: rc } = scratch.getCanvas('bevel-dark', size);
-
-    // Outer edge = content boundary
-    rc.drawImage(contentCanvas, 0, 0);
-
-    // Inner edge = deeper erosion, blurred for soft falloff toward center
-    const { canvas: innerMask, ctx: im } = scratch.getCanvas('bevel-dark-mask', size);
-    im.filter = `blur(${Math.max(2.5, erodeDark * 0.6325)}px)`;
-    im.drawImage(contentCanvas, erodeDark / 2, erodeDark / 2, size - erodeDark, size - erodeDark);
-    rc.globalCompositeOperation = 'destination-out';
-    rc.drawImage(innerMask, 0, 0);
-
-    // Concave curved shadow: radial from shadow corner + directional
-    rc.globalCompositeOperation = 'source-in';
-
-    // Radial shadow anchor from the shadow corner
-    const shadowCornerX = size * (0.5 - lx * 0.45);
-    const shadowCornerY = size * (0.5 - ly * 0.45);
-    const shadRadGrad = rc.createRadialGradient(
-      shadowCornerX, shadowCornerY, 0, shadowCornerX, shadowCornerY, size * 0.65
-    );
-    shadRadGrad.addColorStop(0.00, 'rgba(0,0,15,0.38)');
-    shadRadGrad.addColorStop(0.18, 'rgba(0,0,15,0.20)');
-    shadRadGrad.addColorStop(0.45, 'rgba(0,0,15,0.06)');
-    shadRadGrad.addColorStop(1.00, 'rgba(0,0,15,0.00)');
-    rc.fillStyle = shadRadGrad;
-    rc.fillRect(0, 0, size, size);
-
-    // Directional supplement for uniform shadow edge
-    rc.globalCompositeOperation = 'lighter';
-    const darkGrad = rc.createLinearGradient(
+    const darkW = Math.max(2, size * LAYER_INNER_SHADOW_WIDTH + blurT * size * 0.006);
+    const { canvas: darkCv, ctx: dc } = scratch.getCanvas('layer-inner-shadow', size);
+    dc.drawImage(contentCanvas, 0, 0);
+    const { canvas: darkMask, ctx: dm } = scratch.getCanvas('layer-inner-shadow-mask', size);
+    dm.filter = `blur(${Math.max(2, darkW * 0.55)}px)`;
+    dm.drawImage(contentCanvas, darkW / 2, darkW / 2, size - darkW, size - darkW);
+    dc.globalCompositeOperation = 'destination-out';
+    dc.drawImage(darkMask, 0, 0);
+    dc.globalCompositeOperation = 'source-in';
+    const grad = dc.createLinearGradient(
       size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
       size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
     );
-    darkGrad.addColorStop(0.00, 'rgba(0,0,15,0.15)');
-    darkGrad.addColorStop(0.25, 'rgba(0,0,15,0.06)');
-    darkGrad.addColorStop(0.50, 'rgba(0,0,15,0.0)');
-    rc.fillStyle = darkGrad;
-    rc.fillRect(0, 0, size, size);
-
+    grad.addColorStop(0.00, `rgba(0,0,10,${LAYER_INNER_SHADOW_DARK_ALPHA})`);
+    grad.addColorStop(0.20, `rgba(0,0,10,${LAYER_INNER_SHADOW_MID_ALPHA})`);
+    grad.addColorStop(0.50, 'rgba(0,0,10,0.00)');
+    dc.fillStyle = grad;
+    dc.fillRect(0, 0, size, size);
+    const blur = Math.max(2, size * LAYER_INNER_SHADOW_BLUR + blurT * size * 0.003);
     outCtx.save();
     outCtx.globalCompositeOperation = 'multiply';
-    // Soft shadowed rim (blur-heavy, low sharpness)
-    outCtx.globalAlpha = 0.85;
-    outCtx.filter = `blur(${darkBlur}px)`;
-    outCtx.drawImage(ringCanvas, 0, 0);
+    outCtx.globalAlpha = LAYER_INNER_SHADOW_ALPHA_BLUR;
+    outCtx.filter = `blur(${blur}px)`;
+    outCtx.drawImage(darkCv, 0, 0);
     outCtx.filter = 'none';
-    outCtx.globalAlpha = 0.35;
-    outCtx.drawImage(ringCanvas, 0, 0);
+    outCtx.globalAlpha = LAYER_INNER_SHADOW_ALPHA_SHARP;
+    outCtx.drawImage(darkCv, 0, 0);
     outCtx.restore();
   }
 
-  // ── Pass 3: External border — thin outline OUTSIDE the layer shape ────────
-  // Built by: drawing content slightly oversized (dilation) then subtracting
-  // the original to get a thin ring just outside the content boundary.
-  // Composited with source-over so it draws on whatever is underneath.
+  // ── [5] BORDA EXTERNA (ring fora da shape, cor da layer) ─────────────────
   {
-    const dilate = Math.max(1, size * 0.0015); // Thinner: ~1.5px at 1024
-    const { canvas: ringCanvas, ctx: rc } = scratch.getCanvas('bevel-outer', size);
-
-    // Outer ring = slightly expanded content (dilated by drawing larger, centered)
+    const dilate = Math.max(1.5, size * LAYER_OUTER_BORDER_WIDTH);
     const expand = dilate * 2;
-    rc.filter = `blur(${dilate * 0.12}px)`;
-    rc.drawImage(contentCanvas, -dilate, -dilate, size + expand, size + expand);
-    rc.filter = 'none';
-
-    // Subtract original to keep only the outer fringe
-    rc.globalCompositeOperation = 'destination-out';
-    rc.drawImage(contentCanvas, 0, 0);
-
-    // Color: very subtle dark fringe
-    rc.globalCompositeOperation = 'source-in';
-    rc.fillStyle = 'rgba(0,0,0,0.10)';
-    rc.fillRect(0, 0, size, size);
-
+    const { canvas: outerCv, ctx: oc } = scratch.getCanvas('layer-outer-border', size);
+    oc.filter = `blur(${Math.max(0.5, dilate * 0.5)}px)`;
+    oc.drawImage(contentCanvas, -dilate, -dilate, size + expand, size + expand);
+    oc.filter = 'none';
+    oc.globalCompositeOperation = 'destination-out';
+    oc.drawImage(contentCanvas, 0, 0);
+    oc.globalCompositeOperation = 'source-in';
+    oc.drawImage(contentCanvas, -dilate, -dilate, size + expand, size + expand);
     outCtx.save();
     outCtx.globalCompositeOperation = 'source-over';
-    outCtx.drawImage(ringCanvas, 0, 0);
+    outCtx.globalAlpha = LAYER_OUTER_BORDER_ALPHA;
+    outCtx.drawImage(outerCv, 0, 0);
     outCtx.restore();
   }
 }
@@ -709,10 +761,10 @@ async function renderLayerCanvas2D(
     const { canvas: specCanvas, ctx: sc } = scratch.getCanvas('layer-spec', size);
 
     // Tight radial glow that stays close to the rim
-    const specGrad = sc.createRadialGradient(hx, hy, 0, hx, hy, size * 0.24);
+    const specGrad = sc.createRadialGradient(hx, hy, 0, hx, hy, size * LAYER_SPECULAR_RADIUS);
     for (let i = 0; i <= 14; i++) {
       const t = i / 14;
-      specGrad.addColorStop(t, `rgba(255,255,255,${(0.40 * Math.pow(1 - t, 4.2)).toFixed(3)})`);
+      specGrad.addColorStop(t, `rgba(255,255,255,${(LAYER_SPECULAR_PEAK_ALPHA * Math.pow(1 - t, 4.2)).toFixed(3)})`);
     }
     sc.fillStyle = specGrad;
     sc.fillRect(0, 0, size, size);
@@ -745,10 +797,10 @@ async function renderLayerCanvas2D(
     const { canvas: rimCanvas, ctx: rc } = scratch.getCanvas('layer-rim', size);
 
     const rimGrad = rc.createLinearGradient(gx1, gy1, gx2, gy2);
-    rimGrad.addColorStop(0.00, 'rgba(255,255,255,0.30)');
-    rimGrad.addColorStop(0.22, 'rgba(255,255,255,0.09)');
+    rimGrad.addColorStop(0.00, `rgba(255,255,255,${LAYER_FRESNEL_LIT_ALPHA})`);
+    rimGrad.addColorStop(0.22, `rgba(255,255,255,${LAYER_FRESNEL_MID_ALPHA})`);
     rimGrad.addColorStop(0.55, 'rgba(255,255,255,0.01)');
-    rimGrad.addColorStop(1.00, 'rgba(255,255,255,0.04)');
+    rimGrad.addColorStop(1.00, `rgba(255,255,255,${LAYER_FRESNEL_SHADOW_ALPHA})`);
 
     rc.fillStyle = rimGrad;
     rc.fillRect(0, 0, size, size);
@@ -773,7 +825,7 @@ async function renderLayerCanvas2D(
 
     // Color: soft white
     ic.globalCompositeOperation = 'source-in';
-    ic.fillStyle = 'rgba(255,255,255,0.22)';
+    ic.fillStyle = `rgba(255,255,255,${LAYER_INSET_ALPHA})`;
     ic.fillRect(0, 0, size, size);
 
     outCtx.save();
@@ -786,7 +838,7 @@ async function renderLayerCanvas2D(
 
   // ── 5b. Edge inner glow (warm luminous band inside edges) ─────────────────
   {
-    const erodeGlow = Math.max(3, size * 0.015);
+    const erodeGlow = Math.max(3, size * LAYER_INNER_GLOW_WIDTH);
     const { canvas: glowCanvas, ctx: gc } = scratch.getCanvas('layer-glow', size);
 
     // Start with content shape
@@ -805,9 +857,9 @@ async function renderLayerCanvas2D(
     const glowY = size * (0.5 + ly * 0.4);
     const glowGrad = gc.createRadialGradient(glowX, glowY, 0, glowX, glowY, size * 0.7);
     const glowColor = dark ? '100,120,170' : '255,245,225';
-    glowGrad.addColorStop(0.00, `rgba(${glowColor},0.35)`);
-    glowGrad.addColorStop(0.30, `rgba(${glowColor},0.15)`);
-    glowGrad.addColorStop(0.60, `rgba(${glowColor},0.04)`);
+    glowGrad.addColorStop(0.00, `rgba(${glowColor},${LAYER_INNER_GLOW_LIT_ALPHA})`);
+    glowGrad.addColorStop(0.30, `rgba(${glowColor},${LAYER_INNER_GLOW_MID_ALPHA})`);
+    glowGrad.addColorStop(0.60, `rgba(${glowColor},${LAYER_INNER_GLOW_EDGE_ALPHA})`);
     glowGrad.addColorStop(1.00, `rgba(${glowColor},0.00)`);
     gc.fillStyle = glowGrad;
     gc.fillRect(0, 0, size, size);
@@ -827,7 +879,7 @@ async function renderLayerCanvas2D(
       size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
       size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
     );
-    dimGrad.addColorStop(0.00, `rgba(0,0,0,${(0.12 * translucency).toFixed(3)})`);
+    dimGrad.addColorStop(0.00, `rgba(0,0,0,${(LAYER_DIM_SHADOW_ALPHA * translucency).toFixed(3)})`);
     dimGrad.addColorStop(0.45, 'rgba(0,0,0,0.02)');
     dimGrad.addColorStop(1.00, 'rgba(0,0,0,0.00)');
     dc.fillStyle = dimGrad;
@@ -858,8 +910,8 @@ async function renderLayerCanvas2D(
       shadowX, shadowY
     );
     innerGrad.addColorStop(0.0, 'rgba(0,0,0,0)');
-    innerGrad.addColorStop(0.6, dark ? 'rgba(0,0,20,0.18)' : 'rgba(0,0,20,0.06)');
-    innerGrad.addColorStop(1.0, dark ? 'rgba(0,0,20,0.45)' : 'rgba(0,0,20,0.18)');
+    innerGrad.addColorStop(0.6, dark ? `rgba(0,0,20,${LAYER_DIR_SHADOW_MID_DARK})` : `rgba(0,0,20,${LAYER_DIR_SHADOW_MID_LIGHT})`);
+    innerGrad.addColorStop(1.0, dark ? `rgba(0,0,20,${LAYER_DIR_SHADOW_MAX_DARK})` : `rgba(0,0,20,${LAYER_DIR_SHADOW_MAX_LIGHT})`);
     
     ic.fillStyle = innerGrad;
     ic.fillRect(0, 0, size, size);
@@ -1216,103 +1268,116 @@ export async function renderIconToCanvas(
 
   c.restore(); // end squircle clip
 
-  // ── Squircle glass rim — 3 passes for physical 3D bevel depth ────────────
+  // ── Squircle glass rim ────────────────────────────────────────────────────
   //
-  //  The characteristic liquid glass edge has two components:
-  //    • Inner bright rim  — light catching the inward-facing bevel on the lit side
-  //    • Outer dark border — shadow occlusion on the boundary of the shadow side
-  //  Together they create the "raised button" 3D illusion seen in iOS Liquid Glass.
+  //  Visual map (what you SEE on the icon, not code internals):
+  //
+  //  [A] BORDA INTERNA COLORIDA — thick stroke just inside the squircle edge.
+  //      This is the prominent colored/white ring visible all around the icon border.
+  //      Color = bg color (so blue bg → blue rim, orange → orange rim).
+  //      Stronger on the lit side, softer on the shadow side.
+  //
+  //  [B] GLARE — tiny bright white hotspot at the lit corner only.
+  //      Very thin, always white — simulates sharp specular on the bevel tip.
+  //
+  //  [C] SOMBRA BORDA (dark outer stroke) — darkens the outer pixel of the squircle.
+  //      Strongest on the shadow side. Creates the "raised" depth illusion.
   //
   {
     const angleRad = (lightAngle * Math.PI) / 180;
     const lx = Math.cos(angleRad);
     const ly = -Math.sin(angleRad);
 
-      // 1. Inner bright rim — INSIDE the shape on the lit side.
-      //    Stroke is drawn on a slightly smaller squircle so it sits fully inside
-      //    the glass surface, simulating a bevelled edge catching the light.
-      {
-        const inset = Math.max(3.5, size * 0.0055); // ~5.6px at 1024 (thicker inner rim)
-        const rimBlur = Math.max(2.0, size * 0.0028); // stronger blur for visible softness
-        c.save();
-        c.translate(inset, inset);
-        c.filter = `blur(${rimBlur}px)`;
-        const innerRimGrad = c.createLinearGradient(
-          size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),
-          size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5)
-        );
-        innerRimGrad.addColorStop(0.00, 'rgba(255,255,255,0.78)');
-        innerRimGrad.addColorStop(0.28, 'rgba(255,255,255,0.40)');
-        innerRimGrad.addColorStop(0.60, 'rgba(255,255,255,0.10)');
-        innerRimGrad.addColorStop(1.00, 'rgba(255,255,255,0.0)');
-        drawSquirclePath(c, 0, 0, size - inset * 2);
-        c.strokeStyle = innerRimGrad;
-        c.lineWidth = Math.max(3.5, size * 0.0055);
-        c.globalCompositeOperation = 'screen';
-        c.stroke();
-        c.restore();
+    // Sample bg color for [A]. Mix lightly toward white (25%) so it reads as a
+    // highlight, not the flat fill. Lower mix = more saturated/vivid color in the rim.
+    const bgSample = (() => {
+      const s = 16;
+      const tmp = document.createElement('canvas');
+      tmp.width = tmp.height = s;
+      const tc = tmp.getContext('2d')!;
+      tc.drawImage(bgCanvas, 0, 0, s, s);
+      const data = tc.getImageData(0, 0, s, s).data;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] > 30) { r += data[i]; g += data[i + 1]; b += data[i + 2]; n++; }
       }
+      if (n === 0) return { r: 255, g: 255, b: 255 };
+      r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+      // Boost saturation before mixing toward white
+      const avg = (r + g + b) / 3;
+      r = Math.min(255, Math.round(avg + (r - avg) * 1.5));
+      g = Math.min(255, Math.round(avg + (g - avg) * 1.5));
+      b = Math.min(255, Math.round(avg + (b - avg) * 1.5));
+      // Mix 25% toward white — keeps vivid color while being readable as a highlight
+      const mix = 0.25;
+      return {
+        r: Math.round(r + (255 - r) * mix),
+        g: Math.round(g + (255 - g) * mix),
+        b: Math.round(b + (255 - b) * mix),
+      };
+    })();
+    const bg = (a: number) => `rgba(${bgSample.r},${bgSample.g},${bgSample.b},${a})`;
 
-    // 2. Focused specular glare — tight bright hotspot on the lit corner.
-    //    Offset angle slightly to simulate the inner bevel's steeper face.
+    // [A] BORDA INTERNA COLORIDA
+    // Thick stroke running just inside the squircle boundary, colored with bg.
+    // Lit side is bright, shadow side fades to ~30% intensity (still visible = depth).
     {
-      const glx = Math.cos(angleRad + 0.15);
-      const gly = -Math.sin(angleRad + 0.15);
-      const inset = Math.max(1.2, size * 0.0025);
+      const inset   = Math.max(3.5, size * 0.0055);
+      const lw      = Math.max(3.5, size * 0.0055);
+      const blurPx  = Math.max(2.0, size * 0.0028);
+      const grad = c.createLinearGradient(
+        size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),  // lit corner
+        size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),  // shadow corner
+      );
+      grad.addColorStop(0.00, bg(0.90));   // lit side — vivid and bright
+      grad.addColorStop(0.30, bg(0.60));
+      grad.addColorStop(0.65, bg(0.30));
+      grad.addColorStop(1.00, bg(0.18));   // shadow side — still present = 3D wrap
       c.save();
       c.translate(inset, inset);
-      const glareGrad = c.createLinearGradient(
-        size * (0.5 + glx * 0.5), size * (0.5 + gly * 0.5),
-        size * 0.5, size * 0.5
-      );
-      glareGrad.addColorStop(0.00, 'rgba(255,255,255,0.85)');
-      glareGrad.addColorStop(0.10, 'rgba(255,255,255,0.32)');
-      glareGrad.addColorStop(0.28, 'rgba(255,255,255,0.0)');
+      c.filter = `blur(${blurPx}px)`;
       drawSquirclePath(c, 0, 0, size - inset * 2);
-      c.strokeStyle = glareGrad;
+      c.strokeStyle = grad;
+      c.lineWidth = lw;
+      c.globalCompositeOperation = 'screen';
+      c.stroke();
+      c.restore();
+    }
+
+    // [B] GLARE — pure white micro-hotspot on the lit corner bevel tip
+    {
+      const glx   = Math.cos(angleRad + 0.15);
+      const gly   = -Math.sin(angleRad + 0.15);
+      const inset = Math.max(1.2, size * 0.0025);
+      const grad  = c.createLinearGradient(
+        size * (0.5 + glx * 0.5), size * (0.5 + gly * 0.5),
+        size * 0.5, size * 0.5,
+      );
+      grad.addColorStop(0.00, 'rgba(255,255,255,0.85)');
+      grad.addColorStop(0.10, 'rgba(255,255,255,0.30)');
+      grad.addColorStop(0.28, 'rgba(255,255,255,0.00)');
+      c.save();
+      c.translate(inset, inset);
+      drawSquirclePath(c, 0, 0, size - inset * 2);
+      c.strokeStyle = grad;
       c.lineWidth = Math.max(1.0, size * 0.0015);
       c.globalCompositeOperation = 'screen';
       c.stroke();
       c.restore();
     }
 
-    // 3. Secondary ambient rim — shadow side, opposite the light.
-    //    Simulates bounce/fill light wrapping around the back edge of the glass,
-    //    just like the Apple official icon style where BOTH corners catch light.
+    // [C] SOMBRA BORDA — dark outer stroke at the squircle boundary, shadow side
     {
-      const inset = Math.max(3.5, size * 0.0055);
-      c.save();
-      c.translate(inset, inset);
-      c.filter = `blur(${Math.max(1.5, size * 0.003)}px)`;
-      // Gradient runs from shadow corner (opposite light) → center, fades out quickly
-      const ambientGrad = c.createLinearGradient(
-        size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
-        size * (0.5 + lx * 0.15), size * (0.5 + ly * 0.15),
+      const grad = c.createLinearGradient(
+        size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),  // shadow corner
+        size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5),  // lit corner
       );
-      ambientGrad.addColorStop(0.00, 'rgba(255,255,255,0.32)');
-      ambientGrad.addColorStop(0.22, 'rgba(255,255,255,0.12)');
-      ambientGrad.addColorStop(0.50, 'rgba(255,255,255,0.02)');
-      ambientGrad.addColorStop(1.00, 'rgba(255,255,255,0.00)');
-      drawSquirclePath(c, 0, 0, size - inset * 2);
-      c.strokeStyle = ambientGrad;
-      c.lineWidth = Math.max(2.5, size * 0.004);
-      c.globalCompositeOperation = 'screen';
-      c.stroke();
-      c.restore();
-    }
-
-    // 4. Dark outer border — AT the shape boundary on the shadow side.
-    {
-      const darkGrad = c.createLinearGradient(
-        size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),
-        size * (0.5 + lx * 0.5), size * (0.5 + ly * 0.5)
-      );
-      darkGrad.addColorStop(0.00, 'rgba(0,0,15,0.34)');
-      darkGrad.addColorStop(0.28, 'rgba(0,0,15,0.12)');
-      darkGrad.addColorStop(0.55, 'rgba(0,0,15,0.0)');
+      grad.addColorStop(0.00, 'rgba(0,0,15,0.34)');
+      grad.addColorStop(0.28, 'rgba(0,0,15,0.12)');
+      grad.addColorStop(0.55, 'rgba(0,0,15,0.00)');
       c.save();
       drawSquirclePath(c, 0, 0, size);
-      c.strokeStyle = darkGrad;
+      c.strokeStyle = grad;
       c.lineWidth = Math.max(2.4, size * 0.004);
       c.globalCompositeOperation = 'multiply';
       c.stroke();

@@ -1,326 +1,234 @@
 #version 300 es
 precision highp float;
 
-#define PI 3.14159265359
+// [A] SPECULAR — bright spot at the lit corner edge
+const float GL_SPECULAR_EDGE  = 0.22; // specular intensity clipped to edge ring
+const float GL_RIM_INTENSITY  = 0.50; // Fresnel rim brightness (grazing angle glow)
+const float GL_RIM_POWER      = 2.4;  // rim falloff — higher = thinner rim
+const float GL_RIM_NDOT_POWER = 3.0;  // rim light-angle response — higher = more directional
+// [C] ENVIRONMENT REFLECTION — glass surface reflecting ambient surroundings
+const float GL_ENV_FRESNEL    = 0.25; // reflection strength at grazing angles
+// [D] INNER GLOW — warm/cool luminous band just inside the edge
+const float GL_INNER_GLOW     = 0.22; // glow intensity
+// [E] AMBIENT RIM — background color bleeding into the shadow-side edge
+const float GL_AMBIENT_RIM    = 0.55; // bg color intensity on shadow rim
+const float GL_AMBIENT_SAT    = 2.65; // saturation boost of the bg color sample
+// [F] VOLUMETRIC DEPTH
+const float GL_AO_DARKEN      = 0.58; // ambient occlusion darkening (lower = darker)
+const float GL_FROSTINESS     = 0.35; // how much blur makes glass milky/opaque
+// =============================================================================
 
-// Per-channel refractive indices for chromatic dispersion
-const float N_R = 1.0 - 0.02;
-const float N_G = 1.0;
-const float N_B = 1.0 + 0.02;
+in vec2 vUV;
+in vec2 vScreenUV;
 
-in vec2 v_uv;
+uniform sampler2D uLayerTex;       // layer content (alpha = glass mask)
+uniform sampler2D uBlurredBgTex;   // 2-pass Gaussian blurred background
+uniform sampler2D uOrigBgTex;      // original (sharp) background
 
-// Textures
-uniform sampler2D u_layerTex;       // layer content (alpha = glass mask)
-uniform sampler2D u_blurredBg;      // Gaussian-blurred background
-uniform sampler2D u_bg;             // original (sharp) background
-
-// Canvas / DPR
-uniform vec2  u_resolution;         // canvas size in physical pixels
-uniform float u_dpr;                // device pixel ratio
-
-// Glass shape / SDF params
-uniform float u_refThickness;       // SDF edge refraction thickness (px, ~80)
-uniform float u_refFactor;          // refraction index (~1.3)
-uniform float u_refDispersion;      // chromatic dispersion strength
-
-// Fresnel params
-uniform float u_fresnelRange;       // Fresnel falloff range
-uniform float u_fresnelFactor;      // Fresnel overall intensity
-uniform float u_fresnelHardness;    // Fresnel onset shift
-
-// Glare params
-uniform float u_glareRange;
-uniform float u_glareConvergence;
-uniform float u_glareOppositeFactor;
-uniform float u_glareFactor;
-uniform float u_glareHardness;
-uniform float u_glareAngle;         // radians
-
-// Glass tint
-uniform vec4  u_tint;               // RGBA tint colour
-
-// Legacy compat
-uniform float u_opacity;
-uniform float u_translucency;       // 0-1 mix between sharp and blurred bg inside glass
-
-// Appearance
-uniform int   u_mode;               // 0 = default, 1 = dark, 2 = clear
+uniform float uBlur;               // 0-1: blur / frostiness strength
+uniform float uTranslucency;       // 0-1: bg show-through
+uniform float uSpecular;           // 0-1: specular intensity (0 = off)
+uniform vec2  uLightDir;           // normalised, FROM light source
+uniform float uOpacity;            // 0-1
+uniform int   uMode;               // 0=default, 1=dark, 2=clear
+uniform float uAberration;         // 0-1: chromatic aberration strength
+uniform vec2  uTexelSize;          // 1/resolution
+uniform float uDarkAdjust;         // 0-1: dark mode adjustment
+uniform float uMonoAdjust;         // 0-1: clear mode adjustment
 
 out vec4 fragColor;
 
-// ─── SDF from alpha mask ──────────────────────────────────────────────────────
-// We compute an approximate SDF from the layer's alpha channel. For each
-// fragment we sample the alpha and its neighbours to compute:
-//   • signed distance (negative = inside, positive = outside)
-//   • gradient (surface normal direction)
-//
-// The alpha-based SDF is resolution-independent because the step sizes are
-// normalised to physical pixels, and the mapping uses the actual alpha falloff
-// rather than a fixed pixel radius.
+// ── Color space conversion ──────────────────────────────────────────────────
+vec3 toLinear(vec3 srgb) { return pow(max(srgb, 0.0), vec3(2.2)); }
+vec3 toSRGB(vec3 lin)    { return pow(max(lin, 0.0), vec3(1.0 / 2.2)); }
+
+// ACES filmic tone mapping (fits HDR values into [0,1] with natural highlights)
+vec3 acesToneMap(vec3 x) {
+  const float a = 2.51;
+  const float b = 0.03;
+  const float c = 2.43;
+  const float d = 0.59;
+  const float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 float sampleAlpha(vec2 uv) {
-  return texture(u_layerTex, uv).a;
+  return texture(uLayerTex, uv).a;
 }
 
-// Compute signed distance from the alpha edge.
-// Inside (alpha ≈ 1): negative distance  (how far from the edge into the shape)
-// Outside (alpha ≈ 0): positive distance
-// At the boundary (alpha ≈ 0.5): ~0
-float alphaSDF(vec2 uv) {
-  float a = sampleAlpha(uv);
-  // Map alpha [0..1] to signed distance.
-  // The key insight: we measure HOW MANY PIXELS from the edge we are by
-  // sampling in a ring and finding the nearest edge crossing.
-  // For performance we use a fast approximation: treat alpha as a linear
-  // ramp around edges (anti-aliased content) and map 0.5 → 0 distance.
-
-  // Quick path: fully transparent or fully opaque — use a multi-sample walk
-  // to estimate pixel distance to the 0.5 isoline.
-  if (a < 0.01) return 1.0;  // outside, far from edge
-
-  // Estimate distance using neighbourhood gradient magnitude.
-  // This converts alpha slope into pixel-space distance.
-  vec2 texelSize = 1.0 / u_resolution;
-
-  // Central-difference gradient of alpha
-  float aR = sampleAlpha(uv + vec2(texelSize.x, 0.0));
-  float aL = sampleAlpha(uv - vec2(texelSize.x, 0.0));
-  float aU = sampleAlpha(uv + vec2(0.0, texelSize.y));
-  float aD = sampleAlpha(uv - vec2(0.0, texelSize.y));
-
-  vec2 grad = vec2(aR - aL, aU - aD) * 0.5;
-  float gradMag = length(grad);
-
-  // Distance from the 0.5 isoline in screen pixels
-  // d ≈ (alpha - 0.5) / |∇alpha|  — but clamp to avoid divz
-  float d;
-  if (gradMag > 0.001) {
-    d = -(a - 0.5) / gradMag;  // negative inside (a > 0.5 → d < 0)
-  } else {
-    // Flat region: very inside or very outside
-    d = a > 0.5 ? -u_refThickness * 2.0 : u_refThickness * 2.0;
-  }
-
-  return d;
+// Surface normal from alpha gradient via finite differences.
+// Returns the RAW (non-normalised) gradient — its length encodes edge strength.
+vec2 alphaGradient(vec2 uv) {
+  vec2 e = uTexelSize * 2.0;
+  float aR = sampleAlpha(uv + vec2(e.x, 0.0));
+  float aL = sampleAlpha(uv - vec2(e.x, 0.0));
+  float aU = sampleAlpha(uv + vec2(0.0, e.y));
+  float aD = sampleAlpha(uv - vec2(0.0, e.y));
+  return vec2(aR - aL, aU - aD) * 0.5;
 }
 
-// Gradient of the SDF → surface normal
-vec2 sdfNormal(vec2 uv) {
-  vec2 texelSize = 1.0 / u_resolution;
-  vec2 e = texelSize * 1.5;
-
-  float dR = alphaSDF(uv + vec2(e.x, 0.0));
-  float dL = alphaSDF(uv - vec2(e.x, 0.0));
-  float dU = alphaSDF(uv + vec2(0.0, e.y));
-  float dD = alphaSDF(uv - vec2(0.0, e.y));
-
-  return vec2(dR - dL, dU - dD) / (2.0 * e);
+// Edge magnitude: smooth falloff from edge using screen-space derivatives.
+float edgeMagnitude(float alpha) {
+  vec2 d = vec2(dFdx(alpha), dFdy(alpha));
+  float w = length(d);
+  float px = max(uTexelSize.x, uTexelSize.y);
+  return smoothstep(0.0, px * 1.25, w);
 }
 
-// ─── Dispersion helper ────────────────────────────────────────────────────────
-// Sample blurred+sharp bg with per-channel UV offset for chromatic dispersion
-vec4 getTextureDispersion(
-  vec2 offset,
-  float dispersionStrength,
-  float blurMix  // 0 = sharp bg, 1 = fully blurred
-) {
-  vec4 pixel = vec4(1.0);
-
-  float bgR = mix(
-    texture(u_bg, v_uv + offset * (1.0 - (N_R - 1.0) * dispersionStrength)).r,
-    texture(u_blurredBg, v_uv + offset * (1.0 - (N_R - 1.0) * dispersionStrength)).r,
-    blurMix
-  );
-  float bgG = mix(
-    texture(u_bg, v_uv + offset * (1.0 - (N_G - 1.0) * dispersionStrength)).g,
-    texture(u_blurredBg, v_uv + offset * (1.0 - (N_G - 1.0) * dispersionStrength)).g,
-    blurMix
-  );
-  float bgB = mix(
-    texture(u_bg, v_uv + offset * (1.0 - (N_B - 1.0) * dispersionStrength)).b,
-    texture(u_blurredBg, v_uv + offset * (1.0 - (N_B - 1.0) * dispersionStrength)).b,
-    blurMix
-  );
-
-  pixel.r = bgR;
-  pixel.g = bgG;
-  pixel.b = bgB;
-
-  return pixel;
-}
-
-// ─── Angle helper ─────────────────────────────────────────────────────────────
-float vec2ToAngle(vec2 v) {
-  float angle = atan(v.y, v.x);
-  if (angle < 0.0) angle += 2.0 * PI;
-  return angle;
-}
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ── Main ─────────────────────────────────────────────────────────────────────
 void main() {
-  float alpha = sampleAlpha(v_uv);
+  float alpha = sampleAlpha(vUV);
+  if (alpha < 0.01) { fragColor = vec4(0.0); return; }
 
-  // Early out for fully transparent pixels
-  if (alpha < 0.01) {
-    // Outside glass: pass through the original background
-    fragColor = texture(u_bg, v_uv);
-    return;
+  // Internal smart constants for maximum quality (not exposed as uniforms)
+  const float uThickness = 0.65;
+  const float uStrength  = 0.72;
+
+  // Surface gradient and edge strength
+  vec2  grad     = alphaGradient(vUV);
+  float gradLen  = length(grad);
+  vec2  normal   = gradLen > 0.001 ? grad / gradLen : vec2(0.0);
+
+  float thicknessScale = 1.0 + uThickness * 3.0;
+  float normalLen = clamp(gradLen * 3.4 * thicknessScale, 0.0, 1.0);
+  float edge     = edgeMagnitude(alpha);
+
+  // Corner proximity for corner-boost refraction
+  float cornerProx  = min(vUV.x, 1.0 - vUV.x) * min(vUV.y, 1.0 - vUV.y);
+  float cornerBoost = exp(-cornerProx * 40.0) * 0.5;
+
+  // Edge / Rim / Base intensity zones
+  float edgeZone = edge;
+  float rimZone  = smoothstep(0.08, 0.80, normalLen);
+  float baseZone = 1.0 - normalLen;
+
+  // Light direction in UV space (Y flipped — UV is Y-down, math is Y-up)
+  vec2 litDir = vec2(uLightDir.x, -uLightDir.y);
+
+  vec2  fromCenter   = vUV - 0.5;
+  float dist         = length(fromCenter);
+  vec2  normFromCtr  = dist > 0.001 ? normalize(fromCenter) : vec2(0.0);
+
+  // ── 1. Base glass: blurred bg + tint ──────────────────────────────────────
+  float magStrength = 0.008 * baseZone * uTranslucency;
+  vec2  magUV       = vScreenUV + (vScreenUV - 0.5) * magStrength;
+
+  float edgeBand  = pow(edge, 1.0) * smoothstep(0.06, 0.85, normalLen);
+  vec2  aberrOff  = normal * edgeBand * uAberration * 0.010;
+  float r = texture(uBlurredBgTex, clamp(magUV + aberrOff, 0.001, 0.999)).r;
+  float g = texture(uBlurredBgTex, clamp(magUV,            0.001, 0.999)).g;
+  float b = texture(uBlurredBgTex, clamp(magUV - aberrOff, 0.001, 0.999)).b;
+  vec4 bgBlurred = vec4(r, g, b, 1.0);
+
+  vec4 frostTint = (uMode == 1) ? vec4(0.08, 0.08, 0.12, 1.0) : vec4(1.0);
+  vec4 bgSharp   = texture(uOrigBgTex, clamp(magUV, 0.001, 0.999));
+  bgSharp.rgb    = toLinear(bgSharp.rgb);
+  vec4 bgBase    = mix(bgSharp, bgBlurred, clamp(uBlur, 0.0, 1.0));
+  bgBase.rgb     = mix(bgBase.rgb, frostTint.rgb, uBlur * GL_FROSTINESS);
+
+  vec4 layerColor = texture(uLayerTex, vUV);
+  layerColor.rgb  = toLinear(layerColor.rgb);
+  vec4 glassBase  = bgBase;
+
+  float mask    = layerColor.a;
+  float layerMix = (1.0 - uTranslucency) * mask;
+  vec4 result   = mix(glassBase, layerColor, layerMix);
+
+  // ── 2. Volumetric 3D Modeling (Cushion / AO) ──────────────────────────────
+  {
+    float shadowWeight = max(0.0, -dot(normal, litDir));
+    float dome         = pow(1.0 - normalLen, 0.35);
+    float ao           = mix(0.12, 0.55, shadowWeight) * dome;
+    result.rgb        *= mix(1.0, GL_AO_DARKEN, ao);
   }
 
-  // ── Corner proximity for corner-boost refraction ─────────────────────────
-  float cornerProx = min(v_uv.x, 1.0 - v_uv.x) * min(v_uv.y, 1.0 - v_uv.y);
-  // Normalize so that corners → 0, center → ~0.25
-  float cornerBoost = exp(-cornerProx * 40.0) * 0.6; // 0.6 peak at extreme corner
-
-  // Compute SDF distance in pixel-space units
-  float sdfDist = alphaSDF(v_uv);   // negative = inside glass
-  vec2  u_res1x = u_resolution / u_dpr;
-
-  // Normalised distance from edge in pixels (positive inside glass)
-  float nmerged = -sdfDist;  // positive inside
-
-  // ── Edge / Rim / Base intensity zones ───────────────────────────────────
-  // Three exponential falloff zones for fine-grained artistic control:
-  //   edge = sharp glow right at the boundary
-  //   rim  = intermediate ring (Fresnel zone)
-  //   base = deep interior translucency
-  float normDist   = nmerged / max(u_refThickness, 1.0);
-  float edgeZone   = exp(-normDist * 8.0);   // sharp falloff ~2-3px
-  float rimZone    = exp(-normDist * 2.5);   // softer ~10px ring
-  float baseZone   = 1.0 - exp(-normDist * 0.8); // rises to 1 deep inside
-
-  // ── Snell's Law refraction edge factor ──────────────────────────────────
-  float x_R_ratio = 1.0 - nmerged / u_refThickness;
-  float thetaI = asin(clamp(pow(clamp(x_R_ratio, 0.0, 1.0), 2.0), 0.0, 1.0));
-  float thetaT = asin(clamp(1.0 / u_refFactor * sin(thetaI), -1.0, 1.0));
-  float edgeFactor = -tan(thetaT - thetaI);
-
-  // Corner boost: amplify refraction at shape corners where glass curvature is highest
-  edgeFactor *= (1.0 + cornerBoost * 2.0);
-
-  // Deep inside the glass (past refThickness) → no refraction offset
-  if (nmerged >= u_refThickness) {
-    edgeFactor = 0.0;
+  // ── 3. Specular & Rim ──────────────────────────────────────────────────────
+  if (uSpecular > 0.0) {
+    vec2  litPos  = vec2(0.5) + litDir * 0.48;
+    float spec    = pow(max(0.0, 1.0 - length(vUV - litPos) / 0.22), 10.0);
+    float ndotv   = max(0.0, -dot(normal, litDir));
+    float rim     = pow(normalLen, GL_RIM_POWER) * pow(ndotv, GL_RIM_NDOT_POWER) * GL_RIM_INTENSITY;
+    float edgeMask = smoothstep(0.35, 0.92, normalLen);
+    float specEdge = spec * edgeMask * edgeBand;
+    result.rgb    += (specEdge * GL_SPECULAR_EDGE + rim) * uSpecular * vec3(1.0);
   }
 
-  // ── Compute surface normal ──────────────────────────────────────────────
-  vec2 normal = sdfNormal(v_uv);
-  float normalLen = length(normal);
-
-  // ── Build the glass colour ──────────────────────────────────────────────
-  vec4 outColor;
-
-  if (edgeFactor <= 0.0) {
-    // Deep interior: show blurred background with tint
-    vec4 bgInterior = mix(texture(u_bg, v_uv), texture(u_blurredBg, v_uv), u_translucency);
-    // Adaptive saturation boost — blur desaturates, compensate proportionally
-    float grayI = dot(bgInterior.rgb, vec3(0.299, 0.587, 0.114));
-    float satBoostI = 1.0 + u_translucency * 0.4;
-    bgInterior.rgb = mix(vec3(grayI), bgInterior.rgb, satBoostI);
-    vec3 outColorRGB = mix(bgInterior.rgb, u_tint.rgb, u_tint.a * 0.8 * baseZone);
-    
-    // Inset Top Highlight (inset 0 2px #fff3)
-    float insetOff = 2.0 / u_resolution.y;
-    float topMask = clamp(alpha - sampleAlpha(v_uv - vec2(0.0, insetOff)), 0.0, 1.0);
-    outColorRGB += topMask * vec3(1.0) * 0.20;
-
-    outColor = vec4(outColorRGB, 1.0);
-  } else {
-    // Edge region: apply refraction + dispersion
-    float edgeH = clamp(nmerged / u_refThickness, 0.0, 1.0);
-
-    // UV offset from refraction: normal × edgeFactor → UV displacement
-    vec2 refractionOffset = -normal * edgeFactor * 0.05 * u_dpr *
-      vec2(u_resolution.y / (u_res1x.x * u_dpr), 1.0);
-
-    // ── Ripple / caustic perturbation along edge ──────────────────────────
-    // Subtle sinusoidal displacement perpendicular to the normal, creating
-    // a caustic shimmer that makes the glass feel liquid.
-    vec2 perpNormal = vec2(-normal.y, normal.x);
-    float ripple = sin(nmerged * 25.0) * 0.003 * edgeZone;
-    refractionOffset += perpNormal * ripple;
-
-    // Sample with chromatic dispersion
-    float blurMix = mix(edgeH, 1.0, u_translucency);
-    vec4 refractedPixel = getTextureDispersion(
-      refractionOffset,
-      u_refDispersion,
-      blurMix
-    );
-
-    // Adaptive saturation boost for refracted region
-    float grayR = dot(refractedPixel.rgb, vec3(0.299, 0.587, 0.114));
-    float satBoostR = 1.0 + blurMix * 0.45;
-    refractedPixel.rgb = mix(vec3(grayR), refractedPixel.rgb, satBoostR);
-
-    // Glass tint — stronger at rim, gentler at edge
-    outColor = mix(refractedPixel, vec4(u_tint.rgb, 1.0), u_tint.a * 0.8 * rimZone);
-
-    // ── Fresnel reflection ────────────────────────────────────────────────
-    float fresnelFactor = clamp(
-      pow(
-        1.0 + sdfDist / 1500.0 * pow(500.0 / max(u_fresnelRange, 1.0), 2.0) + u_fresnelHardness,
-        5.0
-      ),
-      0.0,
-      1.0
-    );
-
-    outColor = mix(
-      outColor,
-      vec4(1.0),
-      fresnelFactor * u_fresnelFactor * 0.7 * normalLen
-    );
-
-    // ── Directional glare (modulated by edgeZone) ─────────────────────────
-    float glareGeoFactor = clamp(
-      pow(
-        1.0 + sdfDist / 1500.0 * pow(500.0 / max(u_glareRange, 1.0), 2.0) + u_glareHardness,
-        5.0
-      ),
-      0.0,
-      1.0
-    ) * mix(edgeZone, rimZone, 0.5); // modulate by edge/rim zones
-
-    float glareAngle = (vec2ToAngle(normalize(normal + vec2(0.0001))) - PI / 4.0 + u_glareAngle) * 2.0;
-    int glareFarside = 0;
-
-    if (
-      (glareAngle > PI * (2.0 - 0.5) && glareAngle < PI * (4.0 - 0.5)) ||
-      glareAngle < PI * (0.0 - 0.5)
-    ) {
-      glareFarside = 1;
+  // ── 4. Environment reflection ──────────────────────────────────────────────
+  {
+    float envNdotL  = max(0.0, -dot(normal, litDir));
+    vec3  envWarm   = vec3(1.00, 0.97, 0.92);
+    vec3  envCool   = vec3(0.75, 0.80, 0.90);
+    vec3  envColor  = mix(envCool, envWarm, envNdotL);
+    float envFresnel   = normalLen * normalLen * GL_ENV_FRESNEL;
+    float envIntensity = envFresnel * (uSpecular > 0.0 ? uSpecular : 0.3);
+    if (uMode == 1) {
+      envColor      = mix(envColor, vec3(0.15, 0.18, 0.25), 0.6);
+      envIntensity *= 0.5;
     }
-
-    float glareAngleFactor =
-      (0.5 + sin(glareAngle) * 0.5) *
-      (glareFarside == 1 ? 1.2 * u_glareOppositeFactor : 1.2) *
-      u_glareFactor;
-    glareAngleFactor = clamp(pow(glareAngleFactor, 0.1 + u_glareConvergence * 2.0), 0.0, 1.0);
-
-    outColor = mix(
-      outColor,
-      vec4(1.0),
-      glareAngleFactor * glareGeoFactor * normalLen
-    );
+    result.rgb += envColor * envIntensity;
   }
 
-  // ── Appearance mode adjustments ─────────────────────────────────────────
-  if (u_mode == 1) {
-    // Dark mode
-    outColor.rgb = mix(outColor.rgb, outColor.rgb * 0.35 + vec3(0.02, 0.02, 0.05), 0.4);
+  // ── 5. Inner edge glow ────────────────────────────────────────────────────
+  {
+    float innerGlowFalloff = normalLen * exp(-normalLen * 0.55);
+    float litWeight        = max(0.0, -dot(normal, litDir)) * 0.6 + 0.4;
+    vec3  glowColor        = vec3(1.00, 0.96, 0.88);
+    if (uMode == 1) glowColor = vec3(0.40, 0.45, 0.60);
+    result.rgb += glowColor * innerGlowFalloff * litWeight * GL_INNER_GLOW;
   }
 
-  // ── Anti-aliasing at glass boundary ─────────────────────────────────────
-  // Resolution-independent AA: fwidth gives the screen-space derivative of
-  // SDF distance, so the smoothstep band scales perfectly at any resolution.
-  float aa = fwidth(sdfDist);
-  float aaFactor = smoothstep(aa, -aa, sdfDist);
-  vec4 bgPixel = texture(u_bg, v_uv);
+  // ── 6. Ambient background rim (shadow side) ───────────────────────────────
+  {
+    float shadowRim = max(0.0, dot(normal, litDir));
+    float rimBand   = pow(normalLen, 0.8) * shadowRim;
+    vec3  bgColor   = toLinear(texture(uOrigBgTex, vUV).rgb);
+    float bgGray    = dot(bgColor, vec3(0.299, 0.587, 0.114));
+    bgColor         = mix(vec3(bgGray), bgColor, GL_AMBIENT_SAT);
+    result.rgb     += bgColor * rimBand * GL_AMBIENT_RIM;
+  }
 
-  outColor = mix(bgPixel, outColor, aaFactor);
-  outColor.a = aaFactor * u_opacity;
+  // ── 7. Light-angle content dimming ────────────────────────────────────────
+  {
+    float ndotFromCenter = dot(normFromCtr, litDir);
+    float dimFactor      = 0.94 + ndotFromCenter * 0.06;
+    result.rgb          *= mix(1.0, dimFactor, uTranslucency * 0.8);
+  }
 
-  fragColor = clamp(outColor, 0.0, 1.0);
+  // ── 8. Directional inner shadow ───────────────────────────────────────────
+  {
+    float shadowSide = max(0.0, dot(normal, litDir));
+    float innerS     = smoothstep(0.18, 0.48, dist);
+    float shadowStr  = ((uMode == 1) ? 0.45 : 0.22) * (0.5 + uStrength * 0.5);
+    result.rgb       = mix(result.rgb, result.rgb * 0.35, shadowSide * innerS * shadowStr * baseZone);
+  }
+
+  // ── 9. Appearance mode adjustments ────────────────────────────────────────
+  if (uMode == 1 && uDarkAdjust > 0.0) {
+    result.rgb = mix(result.rgb, result.rgb * 0.38 + vec3(0.02, 0.02, 0.05), uDarkAdjust);
+  } else if (uMode == 2 && uMonoAdjust > 0.0) {
+    float gray = dot(result.rgb, vec3(0.299, 0.587, 0.114));
+    vec3  white = vec3(max(gray, 0.85));
+    result.rgb = mix(result.rgb, white, uMonoAdjust);
+  }
+
+  // ── 10. Glass-aware bloom ─────────────────────────────────────────────────
+  {
+    float brightness     = dot(result.rgb, vec3(0.299, 0.587, 0.114));
+    float bloomThreshold = 0.80;
+    if (brightness > bloomThreshold) {
+      float bloomAmount = (brightness - bloomThreshold) / (1.0 - bloomThreshold);
+      float bloomEdge   = mix(rimZone, edgeZone, 0.3) * bloomAmount * 0.18;
+      vec3  bloomColor  = result.rgb * 0.5 + vec3(0.5, 0.48, 0.44) * 0.5;
+      result.rgb       += bloomColor * bloomEdge;
+    }
+  }
+
+  // ── HDR tone mapping + sRGB conversion ────────────────────────────────────
+  result.rgb = acesToneMap(result.rgb);
+  result.rgb = toSRGB(result.rgb);
+
+  result.a   = alpha * uOpacity;
+  fragColor  = clamp(result, 0.0, 1.0);
 }
