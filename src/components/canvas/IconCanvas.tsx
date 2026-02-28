@@ -97,23 +97,35 @@ export function IconCanvas() {
   const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
   const renderSize = iconSize * dpr;
 
+  const renderingRef  = useRef(false);
+  const pendingRef    = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    let cancelled = false;
+    const params = { layers, background, lightAngle, appearanceMode: mode, size: renderSize };
 
-    renderIconToCanvas(canvas, {
-      layers,
-      background,
-      lightAngle,
-      appearanceMode: mode,
-      size: renderSize,
-    }).then(() => {
-      if (cancelled) return;
-    });
+    const run = () => {
+      renderingRef.current = true;
+      renderIconToCanvas(canvas, params).then(() => {
+        renderingRef.current = false;
+        // If a newer render was queued while we were busy, run it now
+        if (pendingRef.current) {
+          const next = pendingRef.current;
+          pendingRef.current = null;
+          next();
+        }
+      });
+    };
 
-    return () => { cancelled = true; };
+    if (renderingRef.current) {
+      // Already rendering — store only the latest request, drop intermediate ones
+      pendingRef.current = run;
+    } else {
+      pendingRef.current = null;
+      run();
+    }
   }, [layers, background, lightAngle, mode, renderSize]);
 
   useEffect(() => {

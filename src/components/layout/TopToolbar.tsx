@@ -6,7 +6,7 @@ import {
 } from '../../store/iconStore';
 import {
   $lightAngle, $zoom, setLightAngle, setZoom, ZOOM_LEVELS,
-  LIGHT_ANGLE_LEVELS, LIGHT_ANGLE_LABELS,
+  LIGHT_ANGLE_LEVELS, LIGHT_ANGLE_LABELS, $webgl2Status, $webgl2Error,
 } from '../../store/uiStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -35,31 +35,37 @@ function hexToHSL(hex: string): { h: number; s: number; l: number } {
   return { h: Math.round((h / 6) * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
 }
 
-const PRESET_HUES = [
-  { hue: 220, label: 'Blue',   color: 'hsl(220,80%,55%)' },
-  { hue: 239, label: 'Indigo', color: 'hsl(239,68%,57%)' },
-  { hue: 270, label: 'Purple', color: 'hsl(270,70%,55%)' },
-  { hue: 330, label: 'Pink',   color: 'hsl(330,80%,60%)' },
-  { hue: 0,   label: 'Red',    color: 'hsl(0,80%,55%)'   },
-  { hue: 25,  label: 'Orange', color: 'hsl(25,85%,55%)'  },
-  { hue: 50,  label: 'Yellow', color: 'hsl(50,85%,55%)'  },
-  { hue: 140, label: 'Green',  color: 'hsl(140,65%,45%)' },
-  { hue: 161, label: 'Mint',   color: 'hsl(161,60%,50%)' },
-  { hue: 183, label: 'Teal',   color: 'hsl(183,65%,42%)' },
-  { hue: 190, label: 'Cyan',   color: 'hsl(190,75%,45%)' },
-  { hue: 28,  label: 'Brown',  color: 'hsl(28,38%,42%)'  },
+const PRESET_COLORS = [
+  // Row 1 — vivid + blues (7)
+  { hex: '#FF3B30', label: 'Red'    },
+  { hex: '#FF9500', label: 'Orange' },
+  { hex: '#FFCC00', label: 'Yellow' },
+  { hex: '#34C759', label: 'Green'  },
+  { hex: '#00C7BE', label: 'Teal'   },
+  { hex: '#007AFF', label: 'Blue'   },
+  { hex: '#5AC8FA', label: 'Sky'    },
+  // Row 2 — cool + neutrals, mid-gray removed (7)
+  { hex: '#FF2D55', label: 'Pink'   },
+  { hex: '#5856D6', label: 'Indigo' },
+  { hex: '#AF52DE', label: 'Purple' },
+  { hex: '#FFFFFF', label: 'White'      },
+  { hex: '#D1D1D6', label: 'Light Gray' },
+  { hex: '#48484A', label: 'Dark Gray'  },
+  { hex: '#000000', label: 'Black'      },
 ];
 
 // ─── Gradient slider ──────────────────────────────────────────────────────────
 
 function GradientSlider({
-  value, min, max, trackGradient, thumbColor, onChange,
+  value, min, max, trackGradient, thumbColor, onChange, onRelease,
 }: {
   value: number; min: number; max: number;
   trackGradient: string; thumbColor: string;
   onChange: (v: number) => void;
+  onRelease?: (v: number) => void;
 }) {
-  const trackRef = React.useRef<HTMLDivElement>(null);
+  const trackRef  = React.useRef<HTMLDivElement>(null);
+  const lastVal   = React.useRef(value);
   const pct = ((value - min) / (max - min)) * 100;
 
   const valueFromPointer = (clientX: number) => {
@@ -70,11 +76,22 @@ function GradientSlider({
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
-    onChange(valueFromPointer(e.clientX));
-    const onMove = (ev: MouseEvent) => onChange(valueFromPointer(ev.clientX));
-    const onUp   = () => {
+    const rect = trackRef.current!.getBoundingClientRect();
+    const thumbX = rect.left + (pct / 100) * rect.width;
+    if (Math.abs(e.clientX - thumbX) > 10) {
+      const v = valueFromPointer(e.clientX);
+      lastVal.current = v;
+      onChange(v);
+    }
+    const onMove = (ev: MouseEvent) => {
+      const v = valueFromPointer(ev.clientX);
+      lastVal.current = v;
+      onChange(v);
+    };
+    const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      onRelease?.(lastVal.current); // flush final value immediately
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -110,6 +127,14 @@ export function TopToolbar() {
   const lightAngle  = useStore($lightAngle);
   const zoom        = useStore($zoom);
   const bg          = useStore($background);
+  const webgl2Status = useStore($webgl2Status);
+  const webgl2Error = useStore($webgl2Error);
+  const webglPopoverText =
+    webgl2Status === 'active'
+      ? 'WebGL2 active'
+      : webgl2Status === 'error'
+        ? `WebGL2 error: ${webgl2Error || 'Unknown error'}`
+        : 'WebGL2 inactive (Canvas 2D)';
 
   const [showBgPicker,   setShowBgPicker]  = useState(false);
   const [showZoomMenu,   setShowZoomMenu]  = useState(false);
@@ -122,9 +147,38 @@ export function TopToolbar() {
   const lightMenuRef  = useRef<HTMLDivElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
 
-  const hue        = bg.hue        ?? 220;
-  const tint       = bg.tint       ?? 20;
-  const brightness = bg.brightness ?? 100;
+  const storeHue        = bg.hue        ?? 220;
+  const storeTint       = bg.tint       ?? 20;
+  const storeBrightness = bg.brightness ?? 100;
+
+  // Local state — updates immediately so sliders feel instant
+  const [localHue,        setLocalHue]        = useState(storeHue);
+  const [localTint,       setLocalTint]       = useState(storeTint);
+  const [localBrightness, setLocalBrightness] = useState(storeBrightness);
+
+  const hue        = localHue;
+  const tint       = localTint;
+  const brightness = localBrightness;
+
+  // Ref holds latest values without causing re-renders — read inside RAF callback
+  const bgValuesRef = useRef({ hue: storeHue, tint: storeTint, brightness: storeBrightness });
+  const rafRef      = useRef(0);
+
+  const flushUpdate = useCallback(() => {
+    if (rafRef.current) { clearTimeout(rafRef.current); rafRef.current = 0; }
+    const { hue: h, tint: ti, brightness: br } = bgValuesRef.current;
+    updateBackground({ type: 'gradient', hue: h, tint: ti, brightness: br, colors: bgColorsFromHueTint(h, ti, br), angle: 135 });
+  }, []);
+
+  // Throttle at ~30fps: frequent enough to feel fluid, spaced enough for WebGL to finish
+  const scheduleUpdate = useCallback(() => {
+    if (rafRef.current) return; // already scheduled, latest values in ref
+    rafRef.current = window.setTimeout(() => {
+      rafRef.current = 0;
+      const { hue: h, tint: ti, brightness: br } = bgValuesRef.current;
+      updateBackground({ type: 'gradient', hue: h, tint: ti, brightness: br, colors: bgColorsFromHueTint(h, ti, br), angle: 135 });
+    }, 33);
+  }, []);
 
   // ── Click-outside handler ─────────────────────────────────────────────────
   useEffect(() => {
@@ -213,26 +267,41 @@ export function TopToolbar() {
   }, []);
 
   // ── Background ───────────────────────────────────────────────────────────
-  const handleHueChange        = (h: number) =>
-    updateBackground({ type: 'gradient', hue: h,   tint,      brightness, colors: bgColorsFromHueTint(h,   tint,   brightness), angle: 135 });
-  const handleTintChange       = (t: number) =>
-    updateBackground({ type: 'gradient', hue,      tint: t,   brightness, colors: bgColorsFromHueTint(hue, t,      brightness), angle: 135 });
-  const handleBrightnessChange = (bv: number) =>
-    updateBackground({ type: 'gradient', hue,      tint,      brightness: bv, colors: bgColorsFromHueTint(hue, tint, bv), angle: 135 });
+  const handleHueChange = (h: number) => {
+    setLocalHue(h);
+    bgValuesRef.current.hue = h;
+    scheduleUpdate();
+  };
+  const handleTintChange = (t: number) => {
+    setLocalTint(t);
+    bgValuesRef.current.tint = t;
+    scheduleUpdate();
+  };
+  const handleBrightnessChange = (bv: number) => {
+    setLocalBrightness(bv);
+    bgValuesRef.current.brightness = bv;
+    scheduleUpdate();
+  };
 
   const handleCustomColor = (hex: string) => {
     const { h, s, l } = hexToHSL(hex);
-    // s → tint: bgColorsFromHueTint uses s1 = 85 * (1 - t)  →  t = (1 - s/85) → tint = t * 100
-    const newTint       = Math.round(Math.min(100, Math.max(0, (1 - s / 85) * 100)));
-    const newBrightness = Math.min(100, Math.max(0, l * 2));
-    updateBackground({ type: 'gradient', hue: h, tint: newTint, brightness: newBrightness, colors: bgColorsFromHueTint(h, newTint, newBrightness), angle: 135 });
+    // Invert: s1 = 85 * (1 - tint/100)  →  tint = (1 - s/85) * 100
+    const newTint = Math.round(Math.min(100, Math.max(0, (1 - s / 85) * 100)));
+    // Invert: l1 = (48 + tint*0.52) * brightness/100  →  brightness = l*100 / (48 + tint*0.52)
+    const l1base = 48 + newTint * 0.52;
+    const newBrightness = Math.round(Math.min(100, Math.max(0, (l * 100) / l1base)));
+    setLocalHue(h);
+    setLocalTint(newTint);
+    setLocalBrightness(newBrightness);
+    bgValuesRef.current = { hue: h, tint: newTint, brightness: newBrightness };
+    scheduleUpdate();
   };
 
   const sat         = Math.round(85 * (1 - tint / 100));
-  const l1cur       = Math.round((48 + tint * 0.28) * brightness / 100);
+  const l1cur       = Math.min(100, Math.round((48 + tint * 0.52) * brightness / 100));
   const hueTrack    = [0,30,60,90,120,150,180,210,240,270,300,330,360].map((h) => `hsl(${h},100%,50%)`).join(', ');
-  const tintTrack   = `linear-gradient(to right, hsl(${hue},85%,${Math.round(48 * brightness / 100)}%), hsl(${hue},0%,${Math.round(76 * brightness / 100)}%))`;
-  const brightTrack = `linear-gradient(to right, #000, hsl(${hue},${sat}%,${Math.round(48 + tint * 0.28)}%))`;
+  const tintTrack   = `linear-gradient(to right, hsl(${hue},85%,${Math.round(48 * brightness / 100)}%), hsl(${hue},0%,${Math.min(100, Math.round(100 * brightness / 100))}%))`;
+  const brightTrack = `linear-gradient(to right, #000, hsl(${hue},${sat}%,${Math.min(100, Math.round(48 + tint * 0.52))}%))`;
   const currentHue  = `hsl(${hue},100%,50%)`;
   const currentTint = `hsl(${hue},${sat}%,${l1cur}%)`;
   const currentBright = `hsl(${hue},${sat}%,${l1cur}%)`;
@@ -338,6 +407,7 @@ export function TopToolbar() {
                   trackGradient={`linear-gradient(to right, ${hueTrack})`}
                   thumbColor={currentHue}
                   onChange={handleHueChange}
+                  onRelease={flushUpdate}
                 />
               </div>
 
@@ -351,6 +421,7 @@ export function TopToolbar() {
                   trackGradient={tintTrack}
                   thumbColor={currentTint}
                   onChange={handleTintChange}
+                  onRelease={flushUpdate}
                 />
               </div>
 
@@ -364,6 +435,7 @@ export function TopToolbar() {
                   trackGradient={brightTrack}
                   thumbColor={currentBright}
                   onChange={handleBrightnessChange}
+                  onRelease={flushUpdate}
                 />
               </div>
 
@@ -372,18 +444,16 @@ export function TopToolbar() {
                 <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.30)' }}>
                   Presets
                 </span>
-                <div className="grid grid-cols-6 gap-1.5">
-                  {PRESET_HUES.map(({ hue: h, label, color }) => (
+                <div className="grid grid-cols-7 gap-1.5 w-full">
+                  {PRESET_COLORS.map(({ hex, label }) => (
                     <button
-                      key={h}
+                      key={hex}
                       title={label}
-                      onClick={() => handleHueChange(h)}
-                      className="w-7 h-7 rounded-lg transition-transform hover:scale-110 active:scale-95"
+                      onClick={() => handleCustomColor(hex)}
+                      className="aspect-square rounded-lg transition-transform hover:scale-110 active:scale-95"
                       style={{
-                        background: color,
-                        boxShadow: hue === h
-                          ? '0 0 0 2px rgba(255,255,255,0.9), 0 2px 8px rgba(0,0,0,0.4)'
-                          : '0 0 0 0.5px rgba(255,255,255,0.15), 0 1px 4px rgba(0,0,0,0.3)',
+                        background: hex,
+                        boxShadow: '0 0 0 0.5px rgba(255,255,255,0.15), 0 1px 4px rgba(0,0,0,0.3)',
                       }}
                     />
                   ))}
@@ -483,7 +553,7 @@ export function TopToolbar() {
 
           {showZoomMenu && (
             <div
-              className="absolute top-full right-0 mt-2 z-50 py-1.5 rounded-[12px] shadow-xl min-w-[90px]"
+              className="absolute top-full right-0 mt-2 z-50 py-1.5 rounded-[12px] shadow-xl min-w-[110px]"
               style={{
                 background: 'rgba(30,30,32,0.95)',
                 backdropFilter: 'blur(40px)',
@@ -496,12 +566,13 @@ export function TopToolbar() {
                 <button
                   key={z}
                   onClick={() => { setZoom(z); setShowZoomMenu(false); }}
-                  className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors"
+                  className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors flex items-center justify-between gap-3"
                   style={{ color: zoom === z ? '#0a84ff' : 'rgba(255,255,255,0.65)' }}
-                  onMouseEnter={(e) => ((e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)')}
-                  onMouseLeave={(e) => ((e.target as HTMLElement).style.background = 'transparent')}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)')}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
                 >
-                  {z}%
+                  <span>{z}%</span>
+                  <span className="tabular-nums" style={{ color: zoom === z ? '#0a84ff' : 'rgba(255,255,255,0.30)' }}>{Math.round(1024 * (z / 100))}pt</span>
                 </button>
               ))}
             </div>
@@ -511,6 +582,45 @@ export function TopToolbar() {
 
       {/* Right — Export */}
       <div className="flex items-center gap-2 min-w-[160px] justify-end">
+        <div className="relative group flex items-center">
+          <span
+            className="w-2 h-2 rounded-full"
+            title={webglPopoverText}
+            style={{
+              background:
+                webgl2Status === 'active'
+                  ? '#34C759'
+                  : webgl2Status === 'error'
+                    ? '#FF453A'
+                    : 'rgba(255,255,255,0.20)',
+              boxShadow:
+                webgl2Status === 'active'
+                  ? '0 0 6px rgba(52,199,89,0.8)'
+                  : webgl2Status === 'error'
+                    ? '0 0 6px rgba(255,69,58,0.7)'
+                    : 'none',
+            }}
+          />
+          <div
+            className="absolute right-full mr-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+            style={{
+              background: 'rgba(30,30,32,0.95)',
+              border: '0.5px solid rgba(255,255,255,0.10)',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.08)',
+              backdropFilter: 'blur(24px) saturate(180%)',
+              WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+              color: 'rgba(255,255,255,0.85)',
+              fontSize: '10px',
+              lineHeight: '14px',
+              padding: '6px 8px',
+              borderRadius: '8px',
+              maxWidth: '220px',
+              whiteSpace: 'normal',
+            }}
+          >
+            {webglPopoverText}
+          </div>
+        </div>
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('icon-export'))}
           className="px-3.5 py-[5px] text-[11px] font-semibold rounded-[8px] transition-all duration-150"

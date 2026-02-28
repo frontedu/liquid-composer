@@ -20,10 +20,13 @@ export const LIGHT_ANGLE_LABELS: Record<number, string> = {
 export const $selectedLayerId = atom<string | null>(null);
 export const $appearanceMode = atom<AppearanceMode>('default');
 export const $lightAngle = atom<number>(135);
-export const $zoom = atom<number>(50);
+export const $zoom = atom<number>(100);
 export const $inspectorTab = atom<'brush' | 'document'>('brush');
 export const $isDragOver = atom<boolean>(false);
 export const $showBackgroundPicker = atom<boolean>(false);
+export type Webgl2Status = 'inactive' | 'active' | 'error';
+export const $webgl2Status = atom<Webgl2Status>('inactive');
+export const $webgl2Error = atom<string>('');
 
 export function selectLayer(id: string | null) {
   $selectedLayerId.set(id);
@@ -51,4 +54,18 @@ export function stepZoom(direction: number) {
     const prev = [...ZOOM_LEVELS].reverse().find((z) => z < current);
     if (prev !== undefined) $zoom.set(prev);
   }
+}
+
+export function setWebgl2Status(status: Webgl2Status) {
+  $webgl2Status.set(status);
+  if (status !== 'error') $webgl2Error.set('');
+}
+
+export function setWebgl2Error(message: string) {
+  $webgl2Error.set(message);
+  $webgl2Status.set('error');
+}
+
+export function setWebgl2Active(active: boolean) {
+  setWebgl2Status(active ? 'active' : 'inactive');
 }

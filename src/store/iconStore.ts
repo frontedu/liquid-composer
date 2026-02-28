@@ -18,11 +18,11 @@ function defaultLiquidGlass(): LiquidGlassConfig {
     enabled: true,          // Liquid Glass on by default
     mode: 'individual',
     specular: true,
-    blur: { enabled: true, value: 42 },
-    translucency: { enabled: true, value: 58 },
+    blur: { enabled: false, value: 0 },
+    translucency: { enabled: true, value: 0 },
     dark: { enabled: false, value: 20 },
     mono: { enabled: false, value: 0 },
-    shadow: { type: 'chromatic', enabled: true, value: 45 },
+    shadow: { type: 'chromatic', enabled: true, value: 75 },
   };
 }
 
@@ -38,7 +38,7 @@ export function createLayer(name: string, parentId: string | null = null): Layer
     blendMode: 'normal' as BlendMode,
     fill: { type: 'none' },
     liquidGlass: defaultLiquidGlass(),
-    layout: { x: 0, y: 0, scale: 66 },
+    layout: { x: 0, y: 0, scale: 70 },
   };
 }
 
@@ -55,16 +55,18 @@ export function createGroup(name: string, parentId: string | null = null): Layer
     blendMode: 'normal' as BlendMode,
     fill: { type: 'none' },
     liquidGlass: defaultLiquidGlass(),
-    layout: { x: 0, y: 0, scale: 66 },
+    layout: { x: 0, y: 0, scale: 70 },
   };
 }
 
 export function bgColorsFromHueTint(hue: number, tint: number, brightness = 100): [string, string] {
   const bFactor = Math.max(0.05, brightness / 100);
-  const s1 = Math.round(85 - tint * 0.6); // 85 → 25
-  const l1 = Math.round((48 + tint * 0.28) * bFactor);
-  const s2 = Math.round(68 - tint * 0.5);
-  const l2 = Math.round((61 + tint * 0.22) * bFactor);
+  const t = tint / 100;                                        // 0 = vivid, 1 = pure white/gray
+  const s1 = Math.max(0, Math.round(85 * (1 - t)));            // 85 → 0
+  const s2 = Math.max(0, Math.round(68 * (1 - t)));            // 68 → 0
+  // Lightness scales so that tint=100 + brightness=100 → l=100% (pure white)
+  const l1 = Math.min(100, Math.round((48 + tint * 0.52) * bFactor));
+  const l2 = Math.min(100, Math.round((61 + tint * 0.39) * bFactor));
   return [`hsl(${hue}, ${s1}%, ${l1}%)`, `hsl(${hue}, ${s2}%, ${l2}%)`];
 }
 
@@ -97,7 +99,7 @@ export function addLayer(blobUrl?: string, sourceFile?: string, parentId: string
   if (sourceFile) layer.sourceFile = sourceFile;
   $layers.set([...layers, layer]);
   $iconModified.set(true);
-  if (wasEmpty) selectLayer(layer.id);
+  selectLayer(layer.id); // Always auto-select newly added layers
   return layer.id;
 }
 

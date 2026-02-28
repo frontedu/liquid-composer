@@ -55,16 +55,6 @@ export function LiquidGlassSection() {
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-[#636366]">Blur</span>
-              <Toggle checked={lg.blur.enabled} onChange={(v) => update({ blur: { ...lg.blur, enabled: v } })} />
-            </div>
-            {lg.blur.enabled && (
-              <Slider value={lg.blur.value} onChange={(v) => update({ blur: { ...lg.blur, value: v } })} min={0} max={100} />
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
               <span className="text-xs text-[#636366]">Translucency</span>
               <Toggle checked={lg.translucency.enabled} onChange={(v) => update({ translucency: { ...lg.translucency, enabled: v } })} />
             </div>
@@ -82,6 +72,7 @@ export function LiquidGlassSection() {
               <Slider value={lg.shadow.value} onChange={(v) => update({ shadow: { ...lg.shadow, value: v } })} min={0} max={100} />
             )}
           </div>
+
         </div>
       )}
     </div>

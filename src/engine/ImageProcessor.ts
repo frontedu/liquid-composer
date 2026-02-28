@@ -33,8 +33,9 @@ export function drawSquirclePath(ctx: CanvasRenderingContext2D, x: number, y: nu
   const r = size / 2;
   const cx = x + r;
   const cy = y + r;
-  // Adaptive steps: more points for larger canvases so each segment ≤ ~1px
-  const steps = Math.max(360, Math.ceil(size * 2));
+  // Adaptive steps: ensure each segment is sub-pixel (≤ ~0.8px arc length)
+  // so the polygon is indistinguishable from a smooth curve at any display density.
+  const steps = Math.max(512, Math.ceil(size * 4));
 
   ctx.beginPath();
   for (let i = 0; i <= steps; i++) {

@@ -168,19 +168,36 @@ void main() {
     return;
   }
 
+  // ── Corner proximity for corner-boost refraction ─────────────────────────
+  float cornerProx = min(v_uv.x, 1.0 - v_uv.x) * min(v_uv.y, 1.0 - v_uv.y);
+  // Normalize so that corners → 0, center → ~0.25
+  float cornerBoost = exp(-cornerProx * 40.0) * 0.6; // 0.6 peak at extreme corner
+
   // Compute SDF distance in pixel-space units
   float sdfDist = alphaSDF(v_uv);   // negative = inside glass
   vec2  u_res1x = u_resolution / u_dpr;
 
   // Normalised distance from edge in pixels (positive inside glass)
-  // nmerged mimics the reference: -1 * sdf * resolution1x.y
   float nmerged = -sdfDist;  // positive inside
+
+  // ── Edge / Rim / Base intensity zones ───────────────────────────────────
+  // Three exponential falloff zones for fine-grained artistic control:
+  //   edge = sharp glow right at the boundary
+  //   rim  = intermediate ring (Fresnel zone)
+  //   base = deep interior translucency
+  float normDist   = nmerged / max(u_refThickness, 1.0);
+  float edgeZone   = exp(-normDist * 8.0);   // sharp falloff ~2-3px
+  float rimZone    = exp(-normDist * 2.5);   // softer ~10px ring
+  float baseZone   = 1.0 - exp(-normDist * 0.8); // rises to 1 deep inside
 
   // ── Snell's Law refraction edge factor ──────────────────────────────────
   float x_R_ratio = 1.0 - nmerged / u_refThickness;
   float thetaI = asin(clamp(pow(clamp(x_R_ratio, 0.0, 1.0), 2.0), 0.0, 1.0));
   float thetaT = asin(clamp(1.0 / u_refFactor * sin(thetaI), -1.0, 1.0));
   float edgeFactor = -tan(thetaT - thetaI);
+
+  // Corner boost: amplify refraction at shape corners where glass curvature is highest
+  edgeFactor *= (1.0 + cornerBoost * 2.0);
 
   // Deep inside the glass (past refThickness) → no refraction offset
   if (nmerged >= u_refThickness) {
@@ -196,16 +213,33 @@ void main() {
 
   if (edgeFactor <= 0.0) {
     // Deep interior: show blurred background with tint
-    outColor = mix(texture(u_bg, v_uv), texture(u_blurredBg, v_uv), u_translucency);
-    outColor = mix(outColor, vec4(u_tint.rgb, 1.0), u_tint.a * 0.8);
+    vec4 bgInterior = mix(texture(u_bg, v_uv), texture(u_blurredBg, v_uv), u_translucency);
+    // Adaptive saturation boost — blur desaturates, compensate proportionally
+    float grayI = dot(bgInterior.rgb, vec3(0.299, 0.587, 0.114));
+    float satBoostI = 1.0 + u_translucency * 0.4;
+    bgInterior.rgb = mix(vec3(grayI), bgInterior.rgb, satBoostI);
+    vec3 outColorRGB = mix(bgInterior.rgb, u_tint.rgb, u_tint.a * 0.8 * baseZone);
+    
+    // Inset Top Highlight (inset 0 2px #fff3)
+    float insetOff = 2.0 / u_resolution.y;
+    float topMask = clamp(alpha - sampleAlpha(v_uv - vec2(0.0, insetOff)), 0.0, 1.0);
+    outColorRGB += topMask * vec3(1.0) * 0.20;
+
+    outColor = vec4(outColorRGB, 1.0);
   } else {
     // Edge region: apply refraction + dispersion
-    // Compute glass edge height for blur blending (0 at edge, 1 deep inside)
     float edgeH = clamp(nmerged / u_refThickness, 0.0, 1.0);
 
     // UV offset from refraction: normal × edgeFactor → UV displacement
     vec2 refractionOffset = -normal * edgeFactor * 0.05 * u_dpr *
       vec2(u_resolution.y / (u_res1x.x * u_dpr), 1.0);
+
+    // ── Ripple / caustic perturbation along edge ──────────────────────────
+    // Subtle sinusoidal displacement perpendicular to the normal, creating
+    // a caustic shimmer that makes the glass feel liquid.
+    vec2 perpNormal = vec2(-normal.y, normal.x);
+    float ripple = sin(nmerged * 25.0) * 0.003 * edgeZone;
+    refractionOffset += perpNormal * ripple;
 
     // Sample with chromatic dispersion
     float blurMix = mix(edgeH, 1.0, u_translucency);
@@ -215,8 +249,13 @@ void main() {
       blurMix
     );
 
-    // Glass tint
-    outColor = mix(refractedPixel, vec4(u_tint.rgb, 1.0), u_tint.a * 0.8);
+    // Adaptive saturation boost for refracted region
+    float grayR = dot(refractedPixel.rgb, vec3(0.299, 0.587, 0.114));
+    float satBoostR = 1.0 + blurMix * 0.45;
+    refractedPixel.rgb = mix(vec3(grayR), refractedPixel.rgb, satBoostR);
+
+    // Glass tint — stronger at rim, gentler at edge
+    outColor = mix(refractedPixel, vec4(u_tint.rgb, 1.0), u_tint.a * 0.8 * rimZone);
 
     // ── Fresnel reflection ────────────────────────────────────────────────
     float fresnelFactor = clamp(
@@ -234,7 +273,7 @@ void main() {
       fresnelFactor * u_fresnelFactor * 0.7 * normalLen
     );
 
-    // ── Directional glare ─────────────────────────────────────────────────
+    // ── Directional glare (modulated by edgeZone) ─────────────────────────
     float glareGeoFactor = clamp(
       pow(
         1.0 + sdfDist / 1500.0 * pow(500.0 / max(u_glareRange, 1.0), 2.0) + u_glareHardness,
@@ -242,7 +281,7 @@ void main() {
       ),
       0.0,
       1.0
-    );
+    ) * mix(edgeZone, rimZone, 0.5); // modulate by edge/rim zones
 
     float glareAngle = (vec2ToAngle(normalize(normal + vec2(0.0001))) - PI / 4.0 + u_glareAngle) * 2.0;
     int glareFarside = 0;
@@ -274,8 +313,10 @@ void main() {
   }
 
   // ── Anti-aliasing at glass boundary ─────────────────────────────────────
-  // Smooth blend at the SDF boundary so edges aren't jagged
-  float aaFactor = smoothstep(0.5, -0.5, sdfDist);
+  // Resolution-independent AA: fwidth gives the screen-space derivative of
+  // SDF distance, so the smoothstep band scales perfectly at any resolution.
+  float aa = fwidth(sdfDist);
+  float aaFactor = smoothstep(aa, -aa, sdfDist);
   vec4 bgPixel = texture(u_bg, v_uv);
 
   outColor = mix(bgPixel, outColor, aaFactor);

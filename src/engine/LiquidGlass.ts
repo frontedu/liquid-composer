@@ -40,15 +40,22 @@ uniform sampler2D uTex;
 uniform vec2  uTexelSize;   // 1.0 / textureSize
 uniform float uRadius;      // blur radius in texel units
 uniform bool  uHorizontal;
+uniform bool  uSaturate;
 
 out vec4 fragColor;
+
+// Linear ↔ sRGB conversion for physically correct blur blending
+vec3 toLinear(vec3 srgb) { return pow(srgb, vec3(2.2)); }
+vec3 toSRGB(vec3 lin)   { return pow(lin, vec3(1.0 / 2.2)); }
 
 // 9-tap weights (symmetric, normalised so sum = 1)
 const float W[9] = float[](0.028, 0.067, 0.124, 0.179, 0.204, 0.179, 0.124, 0.067, 0.028);
 
 void main() {
   if (uRadius < 0.5) {
-    fragColor = texture(uTex, vUV);
+    vec4 s = texture(uTex, vUV);
+    s.rgb = toLinear(s.rgb);
+    fragColor = s;
     return;
   }
   vec4 sum = vec4(0.0);
@@ -58,12 +65,21 @@ void main() {
     vec2 off = uHorizontal
       ? vec2(offset * uTexelSize.x, 0.0)
       : vec2(0.0, offset * uTexelSize.y);
-    sum += texture(uTex, clamp(vUV + off, 0.0005, 0.9995)) * W[i];
+    vec4 s = texture(uTex, clamp(vUV + off, 0.0005, 0.9995));
+    // Blur in linear space for physically correct blending
+    s.rgb = toLinear(s.rgb);
+    sum += s * W[i];
   }
+  // Keep output in LINEAR space — the glass composite shader expects linear input.
   // Saturation boost: glass picks up vivid background colour
-  float gray = dot(sum.rgb, vec3(0.299, 0.587, 0.114));
-  sum.rgb = mix(vec3(gray), sum.rgb, 1.35);
-  fragColor = clamp(sum, 0.0, 1.0);
+  // Adaptive to blur radius — stronger blur = more desaturation = more compensation
+  // Only applies if uSaturate is true (typically dark mode)
+  if (uSaturate) {
+    float gray = dot(sum.rgb, vec3(0.299, 0.587, 0.114));
+    float satBoost = 1.0 + clamp(uRadius / 8.0, 0.0, 1.0) * 0.5;  // 1.0..1.5
+    sum.rgb = mix(vec3(gray), sum.rgb, satBoost);
+  }
+  fragColor = sum; // linear output (no clamping — HDR FBO accepts >1.0)
 }
 `;
 
@@ -93,12 +109,26 @@ uniform float uSpecular;           // 0-1: specular intensity (0 = off)
 uniform vec2  uLightDir;           // normalised, FROM light source
 uniform float uOpacity;            // 0-1
 uniform int   uMode;               // 0=default, 1=dark, 2=clear
-uniform float uDarkAdjust;         // 0-1
-uniform float uMonoAdjust;         // 0-1
 uniform float uAberration;         // 0-1: chromatic aberration strength
 uniform vec2  uTexelSize;          // 1/resolution
+uniform float uDarkAdjust;         // 0-1: dark mode adjustment
+uniform float uMonoAdjust;         // 0-1: clear mode adjustment
 
 out vec4 fragColor;
+
+// ── Color space conversion ──────────────────────────────────────────────────
+vec3 toLinear(vec3 srgb) { return pow(max(srgb, 0.0), vec3(2.2)); }
+vec3 toSRGB(vec3 lin)   { return pow(max(lin, 0.0), vec3(1.0 / 2.2)); }
+
+// ACES filmic tone mapping (fits HDR values into [0,1] with natural highlights)
+vec3 acesToneMap(vec3 x) {
+  const float a = 2.51;
+  const float b = 0.03;
+  const float c = 2.43;
+  const float d = 0.59;
+  const float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -117,12 +147,14 @@ vec2 alphaGradient(vec2 uv) {
   return vec2(aR - aL, aU - aD) * 0.5;
 }
 
-// Edge magnitude: smooth falloff from edge — NOT clipped to binary 0/1.
-// Uses derivative instructions (WebGL2 only) — sub-pixel precise.
+// Edge magnitude: smooth falloff from edge
+// Uses derivative instructions to find the pixel-space width of the edge
 float edgeMagnitude(float alpha) {
   vec2 d = vec2(dFdx(alpha), dFdy(alpha));
-  // Factor ~4 spreads the edge over ~2 pixels rather than snapping to 1 pixel
-  return clamp(length(d) * 4.0, 0.0, 1.0);
+  float w = length(d);
+  // Scale edge width with resolution so borders are consistent at any size.
+  float px = max(uTexelSize.x, uTexelSize.y);
+  return smoothstep(0.0, px * 1.25, w); 
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -130,85 +162,181 @@ void main() {
   float alpha = sampleAlpha(vUV);
   if (alpha < 0.01) { fragColor = vec4(0.0); return; }
 
+  // ── Work in linear color space for physically correct lighting ────────────
+  // All texture samples will be linearized; final output converted to sRGB.
+
+  // uThickness / uStrength are now internal "smart constants" for maximum quality
+  const float uThickness = 0.65; 
+  const float uStrength  = 0.72;
+
   // Surface gradient and edge strength
   vec2  grad     = alphaGradient(vUV);
   float gradLen  = length(grad);              // ~0.5 at edges, ~0 inside
   vec2  normal   = gradLen > 0.001 ? grad / gradLen : vec2(0.0); // normalised direction
-  float normalLen = clamp(gradLen * 3.0, 0.0, 1.0); // smooth 0→1 edge falloff
+  
+  // High-fidelity volumetric height derivative
+  float thicknessScale = 1.0 + uThickness * 3.0; 
+  float normalLen = clamp(gradLen * 3.4 * thicknessScale, 0.0, 1.0); 
   float edge     = edgeMagnitude(alpha);
+
+  // Corner proximity: detect closeness to shape corners for corner-boost refraction
+  float cornerProx = min(vUV.x, 1.0 - vUV.x) * min(vUV.y, 1.0 - vUV.y);
+  float cornerBoost = exp(-cornerProx * 40.0) * 0.5;
+
+  // Edge / Rim / Base intensity zones (exponential falloff from edge)
+  float edgeZone = edge;                             // sharp boundary
+  float rimZone  = smoothstep(0.08, 0.80, normalLen); // intermediate ring (wider)
+  float baseZone = 1.0 - normalLen;                   // deep interior
+
+  // Convert light direction to UV space (uLightDir is in math coords Y-up,
+  // but vUV / normal are in UV coords Y-down → flip Y).
+  // outwardNormal = -normal (gradient points inward); litDir points toward light.
+  vec2 litDir = vec2(uLightDir.x, -uLightDir.y); // UV-space toward-light direction
 
   vec2 fromCenter   = vUV - 0.5;
   float dist        = length(fromCenter);
   vec2  normFromCtr = dist > 0.001 ? normalize(fromCenter) : vec2(0.0);
 
   // ── 1. Base glass: blurred bg + tint ──────────────────────────────────────
-  // Chromatic aberration: offset R/B channels along edge normal
-  vec2 aberrOff = normal * edge * uAberration * 0.006;
-  float r = texture(uBlurredBgTex, clamp(vScreenUV + aberrOff,        0.001, 0.999)).r;
-  float g = texture(uBlurredBgTex, clamp(vScreenUV,                   0.001, 0.999)).g;
-  float b = texture(uBlurredBgTex, clamp(vScreenUV - aberrOff * 1.2,  0.001, 0.999)).b;
-  vec4 bgBlurred = vec4(r, g, b, 1.0);
+  // Very subtle magnification
+  float magStrength = 0.008 * baseZone * uTranslucency;
+  vec2 magUV = vScreenUV + (vScreenUV - 0.5) * magStrength;
 
-  // Frostiness: blur slider drives milkiness (visible even on smooth gradients)
-  vec4 frostTint = (uMode == 1)
-    ? vec4(0.06, 0.06, 0.10, 1.0)   // dark: blue-black frost
-    : (uMode == 2)
-      ? vec4(0.96, 0.97, 1.00, 1.0)  // clear: pure white frost
-      : vec4(0.94, 0.96, 1.00, 1.0); // default: cool white frost
-  bgBlurred.rgb = mix(bgBlurred.rgb, frostTint.rgb, uBlur * 0.40);
+  // Simple, fast chromatic aberration (tight to the edge band)
+  float edgeBand = pow(edge, 1.0) * smoothstep(0.06, 0.85, normalLen);
+  vec2 aberrOff = normal * edgeBand * uAberration * 0.010;
+  float r = texture(uBlurredBgTex, clamp(magUV + aberrOff, 0.001, 0.999)).r;
+  float g = texture(uBlurredBgTex, clamp(magUV,            0.001, 0.999)).g;
+  float b = texture(uBlurredBgTex, clamp(magUV - aberrOff, 0.001, 0.999)).b;
+  vec4 bgBlurred = vec4(r, g, b, 1.0); 
 
-  // Glass tint
-  vec4 glassTint = (uMode == 1)
-    ? vec4(0.05, 0.05, 0.08, 1.0)
-    : frostTint;
+  // Frostiness & Tint
+  vec4 frostTint = (uMode == 1) ? vec4(0.08, 0.08, 0.12, 1.0) : vec4(1.0);
+  vec4 bgSharp = texture(uOrigBgTex, clamp(magUV, 0.001, 0.999));
+  bgSharp.rgb = toLinear(bgSharp.rgb);
+  vec4 bgBase = mix(bgSharp, bgBlurred, clamp(uBlur, 0.0, 1.0));
+  bgBase.rgb = mix(bgBase.rgb, frostTint.rgb, uBlur * 0.35);
 
   vec4 layerColor = texture(uLayerTex, vUV);
-  vec4 glassBase  = mix(glassTint, bgBlurred, clamp(uTranslucency * 1.2, 0.0, 1.0));
-  vec4 result     = mix(layerColor, glassBase, uTranslucency * 0.80);
+  layerColor.rgb = toLinear(layerColor.rgb);
+  vec4 glassBase  = bgBase;  // glass base is always the (blurred) background
 
-  // ── 2. Specular highlight (directional, gamma-sharpened) ──────────────────
-  if (uSpecular > 0.0) {
-    // Primary spot: offset in the direction light comes FROM
-    vec2 litPos   = vec2(0.5) - uLightDir * 0.30;
-    float dLit    = length(vUV - litPos);
-    float spec    = pow(max(0.0, 1.0 - dLit / 0.60), 5.0);
+  float luma = dot(layerColor.rgb, vec3(0.299, 0.587, 0.114));
+  float mask = layerColor.a;
+  // translucency=0 → layer fully visible over bg; translucency=1 → bg fully visible (glass)
+  float layerMix = (1.0 - uTranslucency) * mask;
+  vec4 result = mix(glassBase, layerColor, layerMix);
 
-    // Top-edge strip (characteristic curved-glass highlight)
-    float topEdge    = smoothstep(0.30, 0.02, abs(vUV.y - 0.86));
-    float topFalloff = smoothstep(0.55, 0.0, dLit);
-    float topSpec    = topEdge * topFalloff;
+  // ── 2. Volumetric 3D Modeling (Cushion Effect) ───────────────────────────
+  // Uses inward normal + very wide falloff to simulate a physical 3D dome interior
+  {
+    // shadow side is where inward normal points away from light source
+    float shadowWeight = max(0.0, -dot(normal, litDir));
+    // convexity: 1.0 at center, 0.0 at edges. Extremely wide curve (pow 0.3)
+    float dome = pow(1.0 - normalLen, 0.35); 
+    
+    // Ambient Occlusion + Directional Shadowing
+    // This creates the "weight" and "volume" of the object
+    float ao = mix(0.12, 0.55, shadowWeight) * dome;
+    
+    // Apply darkening - deeper on shadow side, subtle at center
+    result.rgb *= mix(1.0, 0.58, ao);
 
-    float totalSpec = spec * 0.38 + topSpec * 0.24;
-    result.rgb += totalSpec * uSpecular * vec3(0.96, 0.98, 1.00);
+    // Add a very subtle "internal bounce" on the lit side (inner glow)
+    float litSideHighlight = max(0.0, -dot(normal, litDir)) * pow(normalLen, 2.0) * 0.15;
+    result.rgb += vec3(1.0, 0.98, 0.92) * litSideHighlight;
   }
 
-  // ── 3. Fresnel rim light (correct normals from alpha gradient) ────────────
+  // ── 3. Specular & Rim (Detailed) ──────────────────────────────────────────
+    if (uSpecular > 0.0) {
+      vec2 litPos = vec2(0.5) + litDir * 0.48;
+      float spec  = pow(max(0.0, 1.0 - length(vUV - litPos) / 0.22), 10.0);
+      
+      float ndotv = max(0.0, -dot(normal, litDir));
+      float rim   = pow(normalLen, 2.4) * pow(ndotv, 3.0) * 0.50;
+
+      // No dark boost — dark content shouldn't get amplified specular (causes large white blob)
+      float edgeMask = smoothstep(0.35, 0.92, normalLen);
+      float specEdge = spec * edgeMask * edgeBand;
+      result.rgb += (specEdge * 0.22 + rim) * uSpecular * vec3(1.0);
+    }
+
+  // ── 4. Subtle Edge Detais ──────────────────────────────────────────────────
   {
-    // Fresnel: uses actual surface normal for physically correct directionality
-    float ndotv   = max(0.0, dot(normal, -uLightDir));
-    // Falloff: rim is bright at edge (normalLen ~ 1), dark inside (normalLen ~ 0)
-    float rimBase = normalLen * normalLen;
-    // Directional: lit side (toward light) is brighter; shadow side dim
-    float litSide = (uSpecular > 0.0)
-      ? ndotv * 0.55 + 0.45
-      : 0.70;
-    float rim = rimBase * litSide * 0.20;
-    result.rgb += rim;
+    // Sharp edge catching light
+    result.rgb += edge * max(0.0, -dot(normal, litDir)) * 0.18;
   }
 
-  // ── 4. Border glow (edge ring, lit side bright, shadow side dim) ──────────
+  // ── 5. Environment reflection (procedural sky/ground) ─────────────────────
+  // Simulates glass surface catching ambient light from an imaginary
+  // environment. Uses a procedural gradient: warm white on the lit side,
+  // cool blue-gray on the shadow side (like sky reflecting on glass).
   {
-    float ndotv = (uSpecular > 0.0)
-      ? max(0.0, dot(normal, -uLightDir)) * 0.55 + 0.40
-      : 0.65;
-    result.rgb += edge * ndotv * 0.45;
+    // How much the outward normal faces the light direction
+    float envNdotL = max(0.0, -dot(normal, litDir));
+    // Warm (lit) vs cool (shadow) environment colour
+    vec3 envWarm = vec3(1.00, 0.97, 0.92);  // warm sunlit
+    vec3 envCool = vec3(0.75, 0.80, 0.90);  // cool sky
+    vec3 envColor = mix(envCool, envWarm, envNdotL);
+
+    // Fresnel-like: reflection is stronger at grazing angles (edges)
+    float envFresnel = normalLen * normalLen * 0.25;
+    // Modulate by specular control so user can dial it down
+    float envIntensity = envFresnel * (uSpecular > 0.0 ? uSpecular : 0.3);
+    // In dark mode, reduce and shift to cooler tones
+    if (uMode == 1) {
+      envColor = mix(envColor, vec3(0.15, 0.18, 0.25), 0.6);
+      envIntensity *= 0.5;
+    }
+    result.rgb += envColor * envIntensity;
   }
 
-  // ── 5. Inner shadow (radial vignette at edges, fades to centre) ───────────
+  // ── Edge inner glow ───────────────────────────────────────────────────────
+  // Glass edges catch light internally, creating a luminous inner glow that
+  // radiates inward from the content boundary. Warm-shifted, lit-side weighted.
   {
-    float innerS       = smoothstep(0.32, 0.50, dist);
-    float shadowStr    = (uMode == 1) ? 0.38 : 0.14;
-    result.rgb         = mix(result.rgb, result.rgb * 0.22, innerS * shadowStr);
+    // Inner glow uses normalLen as distance-from-edge (1 at edge, 0 inside)
+    float innerGlowFalloff = normalLen * exp(-normalLen * 0.55); // peaks just inside edge
+    float litWeight = max(0.0, -dot(normal, litDir)) * 0.6 + 0.4;
+    vec3 glowColor = vec3(1.00, 0.96, 0.88); // warm
+    if (uMode == 1) glowColor = vec3(0.40, 0.45, 0.60); // dark mode: cool blue
+    float glowIntensity = innerGlowFalloff * litWeight * 0.22;
+    result.rgb += glowColor * glowIntensity;
+  }
+
+  // ── Ambient background rim (shadow side) ─────────────────────────────────
+  // On the side opposite to the light, the glass edge catches the background
+  // colour — like environment colour bleeding into the rim, grounding the icon
+  // visually in its surroundings.
+  {
+    float shadowRim = max(0.0, dot(normal, litDir));  // 1.0 on shadow side
+    float rimBand   = pow(normalLen, 0.8) * shadowRim;
+    vec3 bgColor = toLinear(texture(uOrigBgTex, vUV).rgb);
+    // Boost saturation so the ambient colour reads vividly against dark content
+    float bgGray = dot(bgColor, vec3(0.299, 0.587, 0.114));
+    bgColor = mix(vec3(bgGray), bgColor, 1.65);
+    result.rgb += bgColor * rimBand * 0.55;
+  }
+
+  // ── Light-angle content dimming ───────────────────────────────────────────
+  // Shadow side of the glass darkens content slightly for directional depth.
+  {
+    float ndotFromCenter = dot(normFromCtr, litDir);
+    // lit side = 1.0, shadow side = ~0.88 (subtle darkening)
+    float dimFactor = 0.94 + ndotFromCenter * 0.06;
+    result.rgb *= mix(1.0, dimFactor, uTranslucency * 0.8);
+  }
+
+  // ── 5a. Directional Inner Shadow (away from light source) ────────────────
+  {
+    // Directional shadow factor: 1.0 on the far side of light
+    float shadowSide = max(0.0, dot(normal, litDir));
+    float innerS     = smoothstep(0.18, 0.48, dist);
+    // Strength scales the shadow density
+    float shadowStr  = ((uMode == 1) ? 0.45 : 0.22) * (0.5 + uStrength * 0.5);
+    
+    // Invert shadow on the interior based on dist and normal
+    result.rgb       = mix(result.rgb, result.rgb * 0.35, shadowSide * innerS * shadowStr * baseZone);
   }
 
   // ── 6. Appearance mode adjustments ────────────────────────────────────────
@@ -221,6 +349,28 @@ void main() {
     vec3 white = vec3(max(gray, 0.85));
     result.rgb = mix(result.rgb, white, uMonoAdjust);
   }
+
+  // ── Glass-aware bloom ─────────────────────────────────────────────────────
+  // Bright areas visible through glass subtly bleed light at the edges,
+  // creating a diffusion halo that makes the glass feel alive.
+  {
+    float brightness = dot(result.rgb, vec3(0.299, 0.587, 0.114));
+    float bloomThreshold = 0.80;
+    if (brightness > bloomThreshold) {
+      float bloomAmount = (brightness - bloomThreshold) / (1.0 - bloomThreshold);
+      // Bloom is strongest at edges (rimZone) and softer inside
+      float bloomEdge = mix(rimZone, edgeZone, 0.3) * bloomAmount * 0.18;
+      // Warm bloom color
+      vec3 bloomColor = result.rgb * 0.5 + vec3(0.5, 0.48, 0.44) * 0.5;
+      result.rgb += bloomColor * bloomEdge;
+    }
+  }
+
+  // ── HDR tone mapping + sRGB conversion ────────────────────────────────────
+  // Apply ACES filmic tone map to gracefully compress HDR highlights,
+  // then convert from linear space back to sRGB for display.
+  result.rgb = acesToneMap(result.rgb);
+  result.rgb = toSRGB(result.rgb);
 
   result.a = alpha * uOpacity;
   fragColor = clamp(result, 0.0, 1.0);
@@ -269,10 +419,15 @@ function createProgram(gl: WebGL2RenderingContext, fragSrc: string): WebGLProgra
   return prog;
 }
 
-function makeTexture(gl: WebGL2RenderingContext, w: number, h: number): WebGLTexture {
+function makeTexture(gl: WebGL2RenderingContext, w: number, h: number, hdr = false): WebGLTexture {
   const tex = gl.createTexture()!;
   gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  if (hdr) {
+    // HDR: RGBA16F allows values > 1.0 for proper bloom/specular accumulation
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+  } else {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  }
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -360,8 +515,12 @@ export class LiquidGlassRenderer {
     gl.bindVertexArray(null);
 
     const sz = this.size;
-    this.texA      = makeTexture(gl, sz, sz);
-    this.texB      = makeTexture(gl, sz, sz);
+
+    // HDR: check if rendering to float textures is supported (EXT_color_buffer_float)
+    const hdrSupported = !!gl.getExtension('EXT_color_buffer_float');
+
+    this.texA      = makeTexture(gl, sz, sz, hdrSupported);
+    this.texB      = makeTexture(gl, sz, sz, hdrSupported);
     this.fboA      = makeFBO(gl, this.texA);
     this.fboB      = makeFBO(gl, this.texB);
     this.layerTex  = gl.createTexture()!;
@@ -372,7 +531,7 @@ export class LiquidGlassRenderer {
   }
 
   // ── 2-pass Gaussian blur on bgSource → texB ─────────────────────────────────
-  private blurBackground(bgSource: TexImageSource, radius: number) {
+  private blurBackground(bgSource: TexImageSource, radius: number, saturate: boolean) {
     const { gl } = this;
     const sz = this.size;
     const texelSize = 1.0 / sz;
@@ -392,6 +551,7 @@ export class LiquidGlassRenderer {
     gl.uniform2f(gl.getUniformLocation(this.blurProg, 'uTexelSize'), texelSize, texelSize);
     gl.uniform1f(gl.getUniformLocation(this.blurProg, 'uRadius'), radius);
     gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uHorizontal'), 1);
+    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uSaturate'), saturate ? 1 : 0);
     drawFullscreenQuad(gl, this.vao);
 
     // Vertical pass: texA → fboB
@@ -402,6 +562,7 @@ export class LiquidGlassRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.texA);
     gl.uniform1f(gl.getUniformLocation(this.blurProg, 'uRadius'), radius);
     gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uHorizontal'), 0);
+    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uSaturate'), saturate ? 1 : 0);
     drawFullscreenQuad(gl, this.vao);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -416,7 +577,7 @@ export class LiquidGlassRenderer {
 
     // Always re-blur bg — each layer may have different blur strength,
     // and the 2-pass Gaussian is fast enough to run per layer
-    this.blurBackground(bgSource, blurRadius);
+    this.blurBackground(bgSource, blurRadius, params.mode === 1);
 
     // Upload layer texture
     uploadSourceTexture(gl, this.layerTex, layerSource);
