@@ -19,10 +19,10 @@ function defaultLiquidGlass(): LiquidGlassConfig {
     mode: 'individual',
     specular: true,
     blur: { enabled: false, value: 0 },
-    translucency: { enabled: true, value: 0 },
+    translucency: { enabled: true, value: 10 },
     dark: { enabled: false, value: 20 },
     mono: { enabled: false, value: 0 },
-    shadow: { type: 'chromatic', enabled: true, value: 75 },
+    shadow: { type: 'chromatic', enabled: true, value: 30 },
   };
 }
 
@@ -38,7 +38,7 @@ export function createLayer(name: string, parentId: string | null = null): Layer
     blendMode: 'normal' as BlendMode,
     fill: { type: 'none' },
     liquidGlass: defaultLiquidGlass(),
-    layout: { x: 0, y: 0, scale: 70 },
+    layout: { x: 0, y: 0, scale: 80 },
   };
 }
 
@@ -55,7 +55,7 @@ export function createGroup(name: string, parentId: string | null = null): Layer
     blendMode: 'normal' as BlendMode,
     fill: { type: 'none' },
     liquidGlass: defaultLiquidGlass(),
-    layout: { x: 0, y: 0, scale: 70 },
+    layout: { x: 0, y: 0, scale: 80 },
   };
 }
 
@@ -91,25 +91,38 @@ export const $rootLayers = computed($layers, (layers) =>
 
 export function addLayer(blobUrl?: string, sourceFile?: string, parentId: string | null = null) {
   const layers = $layers.get();
-  const wasEmpty = layers.filter((l) => l.parentId === null).length === 0;
-  const maxOrder = layers.filter((l) => l.parentId === parentId).length;
+  const siblings = layers.filter((l) => l.parentId === parentId);
+  // New layers appear on TOP: highest order = visually first
+  const maxOrder = siblings.length > 0 ? Math.max(...siblings.map((l) => l.order)) : -1;
+
   const layer = createLayer(sourceFile ?? `Layer ${layers.length + 1}`, parentId);
-  layer.order = maxOrder;
+  layer.order = maxOrder + 1;
   if (blobUrl) layer.blobUrl = blobUrl;
   if (sourceFile) layer.sourceFile = sourceFile;
+
+  // Raster images: disable glass by default (no clean alpha silhouette) + scale 100%
+  const isRaster = sourceFile && /\.(png|jpe?g|webp)$/i.test(sourceFile);
+  if (isRaster) {
+    layer.liquidGlass = { ...layer.liquidGlass, enabled: false };
+    layer.layout = { x: 0, y: 0, scale: 100 };
+  }
+
   $layers.set([...layers, layer]);
   $iconModified.set(true);
-  selectLayer(layer.id); // Always auto-select newly added layers
+  selectLayer(layer.id);
   return layer.id;
 }
 
 export function addGroup() {
   const layers = $layers.get();
-  const maxOrder = layers.filter((l) => l.parentId === null).length;
+  const rootSiblings = layers.filter((l) => l.parentId === null);
+  // New groups appear on TOP: highest order = visually first
+  const maxOrder = rootSiblings.length > 0 ? Math.max(...rootSiblings.map((l) => l.order)) : -1;
   const group = createGroup(`Group ${layers.filter((l) => l.type === 'group').length + 1}`);
-  group.order = maxOrder;
+  group.order = maxOrder + 1;
   $layers.set([...layers, group]);
   $iconModified.set(true);
+  selectLayer(group.id);
   return group.id;
 }
 
@@ -127,6 +140,8 @@ export function removeLayer(id: string) {
       }
     }
   }
+  // Revoke blob URLs to free memory
+  layers.filter((l) => toRemove.has(l.id) && l.blobUrl).forEach((l) => URL.revokeObjectURL(l.blobUrl!));
   $layers.set(layers.filter((l) => !toRemove.has(l.id)));
   $iconModified.set(true);
 }
@@ -178,19 +193,31 @@ export function toggleGroupCollapsed(id: string) {
   }
 }
 
-export function reorderLayer(id: string, newOrder: number) {
+export function reorderLayer(id: string, targetId: string, position: 'before' | 'after') {
   const layers = $layers.get();
   const layer = layers.find((l) => l.id === id);
   if (!layer) return;
 
+  // Visual order: descending (highest order = top of list = index 0)
   const siblings = layers
-    .filter((l) => l.parentId === layer.parentId && l.id !== id)
-    .sort((a, b) => a.order - b.order);
+    .filter((l) => l.parentId === layer.parentId)
+    .sort((a, b) => b.order - a.order);
 
-  siblings.splice(newOrder, 0, layer);
+  const withoutDragged = siblings.filter((l) => l.id !== id);
+  const targetIdx = withoutDragged.findIndex((l) => l.id === targetId);
+  if (targetIdx === -1) return;
+
+  if (position === 'before') {
+    withoutDragged.splice(targetIdx, 0, layer);
+  } else {
+    withoutDragged.splice(targetIdx + 1, 0, layer);
+  }
+
+  // Reassign dense orders: top item gets highest, bottom gets 0
+  const n = withoutDragged.length;
   const updated = layers.map((l) => {
-    const idx = siblings.findIndex((s) => s.id === l.id);
-    if (idx !== -1) return { ...l, order: idx };
+    const idx = withoutDragged.findIndex((s) => s.id === l.id);
+    if (idx !== -1) return { ...l, order: n - 1 - idx };
     return l;
   });
   $layers.set(updated);

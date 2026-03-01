@@ -6,12 +6,12 @@ import type { LiquidGlassParams } from './LiquidGlass';
 import { setWebgl2Status, setWebgl2Error } from '../store/uiStore';
 
 // [1] INNER SPECULAR DOME — soft light filling the layer interior on the lit side
-const LAYER_DOME_INTENSITY        = 0.90;  // overall strength
-const LAYER_DOME_CENTER_ALPHA     = 0.26;  // brightness at the brightest point
-const LAYER_DOME_MID_ALPHA        = 0.14;  // brightness halfway across
-const LAYER_DOME_EDGE_ALPHA       = 0.1;  // brightness near the edge before fading out
-const LAYER_DOME_RADIUS           = 0.85;  // dome coverage (× size, 0–1)
-const LAYER_DOME_BLUR_BASE        = 0.022; // softness — higher = more diffuse (× size)
+const LAYER_DOME_INTENSITY        = 0.50;  // overall strength
+const LAYER_DOME_CENTER_ALPHA     = 0.18;  // brightness at the brightest point
+const LAYER_DOME_MID_ALPHA        = 0.09;  // brightness halfway across
+const LAYER_DOME_EDGE_ALPHA       = 0.05;  // brightness near the edge before fading out
+const LAYER_DOME_RADIUS           = 0.80;  // dome coverage (× size, 0–1)
+const LAYER_DOME_BLUR_BASE        = 0.014; // softness — higher = more diffuse (× size)
 
 // [2] INNER COLORED RIM — thin ring inside the layer edge, tinted with the layer color
 // Wraps all the way around: brighter on lit side, softer on shadow side.
@@ -45,9 +45,9 @@ const LAYER_SPECULAR_PEAK_ALPHA   = 0.40;  // brightness at the center
 
 // [7] FRESNEL RIM — white gradient across the whole layer (lit → shadow)
 // Subtle overall sheen that simulates light grazing the glass surface.
-const LAYER_FRESNEL_LIT_ALPHA     = 0.30;  // brightness on lit side
-const LAYER_FRESNEL_MID_ALPHA     = 0.09;  // brightness in the middle
-const LAYER_FRESNEL_SHADOW_ALPHA  = 0.04;  // brightness on shadow side
+const LAYER_FRESNEL_LIT_ALPHA     = 0.18;  // brightness on lit side
+const LAYER_FRESNEL_MID_ALPHA     = 0.05;  // brightness in the middle
+const LAYER_FRESNEL_SHADOW_ALPHA  = 0.02;  // brightness on shadow side
 
 // [8] INSET TOP HIGHLIGHT — 1px white line at the very top edge of the layer
 // Simulates the top bevel of a physical button catching overhead light.
@@ -77,12 +77,112 @@ const LAYER_DIR_SHADOW_MAX_DARK   = 0.15;  // max darkness in dark mode
 
 const imageCache = new Map<string, HTMLImageElement>();
 
+// ─── Hi-res image cache ───────────────────────────────────────────────────────
+// SVGs with explicit small intrinsic dims (e.g. 24×24) are rasterized by Chrome
+// at that size and upscaled. Loading the same URL into a new Image with explicit
+// large width/height forces Chrome to rasterize the SVG at that size instead.
+// We preload this once (fire-and-forget) so the render path stays fully synchronous.
+const HI_RES_SIZE = 2048;
+const hiResImgCache = new Map<string, HTMLImageElement>();
+
+function preloadHiRes(url: string): void {
+  if (hiResImgCache.has(url)) return;
+  const hi = new Image(HI_RES_SIZE, HI_RES_SIZE);
+  hi.crossOrigin = 'anonymous';
+  hi.onload = () => hiResImgCache.set(url, hi);
+  hi.src = url;
+}
+
+// ─── Background canvas cache ──────────────────────────────────────────────────
+// Avoids re-creating the background canvas every render when bg config hasn't changed.
+
+const bgCanvasCache = new Map<string, { canvas: HTMLCanvasElement; key: string }>();
+
+// ─── Drop-shadow canvas cache ─────────────────────────────────────────────────
+// Caches blurred shadow canvases per layer so we don't re-run filter:blur()
+// on every frame when nothing about the shadow has changed.
+const shadowCache = new Map<string, { canvas: HTMLCanvasElement; key: string }>();
+
+function getCachedShadow(
+  layerId: string,
+  contentCanvas: HTMLCanvasElement,
+  size: number,
+  sv: number,
+  fillR: number,
+  fillG: number,
+  fillB: number,
+  shadowAlpha: number,
+  blurPx: number,
+  offsetY: number,
+  layoutX: number,
+  layoutY: number,
+  layoutScale: number,
+  opacity: number,
+): HTMLCanvasElement {
+  // Key must include layout so moving/scaling a layer invalidates the cache
+  const key = `${size}:${sv.toFixed(3)}:${fillR}:${fillG}:${fillB}:${layoutX.toFixed(2)}:${layoutY.toFixed(2)}:${layoutScale.toFixed(2)}:${opacity}`;
+  const cached = shadowCache.get(layerId);
+  if (cached && cached.key === key) return cached.canvas;
+
+  const canvas = cached?.canvas ?? document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const sc = canvas.getContext('2d')!;
+  sc.clearRect(0, 0, size, size);
+  sc.save();
+  sc.filter = `blur(${blurPx}px)`;
+  sc.globalAlpha = shadowAlpha;
+  sc.drawImage(contentCanvas, 0, offsetY);
+  sc.restore();
+  sc.globalCompositeOperation = 'source-in';
+  sc.fillStyle = `rgb(${fillR}, ${fillG}, ${fillB})`;
+  sc.fillRect(0, 0, size, size);
+
+  shadowCache.set(layerId, { canvas, key });
+  // Evict beyond 16 entries to avoid unbounded growth
+  if (shadowCache.size > 16) {
+    shadowCache.delete(shadowCache.keys().next().value!);
+  }
+  return canvas;
+}
+
+// ─── Shared tiny canvas for color sampling (avoids per-render allocation) ────
+const _colorSampleCanvas = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  (c as any)._ctx = null; // lazy init
+  return c;
+})();
+
+// ─── Layer tint color cache ───────────────────────────────────────────────────
+// The dominant tinted color of a layer only changes when blobUrl or fill changes,
+// not when the layer moves. Cache it to avoid getImageData on every frame.
+const layerTintCache = new Map<string, { r: number; g: number; b: number }>();
+
+function getCachedBgCanvas(bg: BackgroundConfig, size: number): { canvas: HTMLCanvasElement; key: string } {
+  const key = `${size}:${JSON.stringify(bg)}`;
+  const cached = bgCanvasCache.get(key);
+  if (cached) return cached;
+  const canvas = createBackgroundCanvas(bg as any, size, size);
+  const entry = { canvas, key };
+  bgCanvasCache.set(key, entry);
+  // Evict oldest entries beyond 8 to avoid unbounded growth
+  if (bgCanvasCache.size > 8) {
+    bgCanvasCache.delete(bgCanvasCache.keys().next().value!);
+  }
+  return entry;
+}
+
 async function getCachedImage(url: string): Promise<HTMLImageElement> {
   if (imageCache.has(url)) return imageCache.get(url)!;
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => { imageCache.set(url, img); resolve(img); };
+    img.onload = () => {
+      imageCache.set(url, img);
+      if (img.naturalWidth <= 512 || img.naturalHeight <= 512) preloadHiRes(url);
+      resolve(img);
+    };
     img.onerror = reject;
     img.src = url;
   });
@@ -317,7 +417,22 @@ function estimateLayerLuminance(layer: Layer): number {
  * Future-proof: gradient backgrounds already expose `colors[0]` which
  * carries the dominant stop; we parse that as a fallback.
  */
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return match
+    ? {
+        r: parseInt(match[1], 16),
+        g: parseInt(match[2], 16),
+        b: parseInt(match[3], 16),
+      }
+    : null;
+}
+
 function shadowColorFromBackground(bg: BackgroundConfig): { r: number; g: number; b: number } {
+  if (bg.bgType === 'custom' && bg.stops && bg.stops.length > 0) {
+    const rgb = hexToRgb(bg.stops[0].color);
+    if (rgb) return { r: Math.round(rgb.r * 0.2), g: Math.round(rgb.g * 0.2), b: Math.round(rgb.b * 0.2) };
+  }
   // Prefer explicit hue/tint when available (gradient or solid with those fields)
   if (bg.hue !== undefined && bg.tint !== undefined) {
     const hue = bg.hue;
@@ -400,16 +515,10 @@ function drawDropShadow(
     fillB = Math.round(b * 0.8 + fb * 0.15 * 0.2);
   }
 
-  const { canvas: shadowCanvas, ctx: sc } = scratch.getCanvas('drop-shadow', size);
-  sc.save();
-  sc.filter = `blur(${blurPx}px)`;
-  sc.globalAlpha = shadowAlpha;
-  sc.drawImage(contentCanvas, 0, offsetY);
-  sc.restore();
-  sc.globalCompositeOperation = 'source-in';
-  sc.fillStyle = `rgb(${fillR}, ${fillG}, ${fillB})`;
-  sc.fillRect(0, 0, size, size);
-
+  const shadowCanvas = getCachedShadow(
+    layerConfig.id, contentCanvas, size, sv, fillR, fillG, fillB, shadowAlpha, blurPx, offsetY,
+    layerConfig.layout.x, layerConfig.layout.y, layerConfig.layout.scale, layerConfig.opacity,
+  );
   outCtx.drawImage(shadowCanvas, 0, 0);
 
 }
@@ -419,6 +528,7 @@ function drawLayerBevel(
   contentCanvas: HTMLCanvasElement,
   size: number,
   lightAngle: number,
+  tintCacheKey: string | null,
   liquidGlass: LiquidGlassConfig,
   scratch: ScratchPool,
 ): void {
@@ -429,11 +539,18 @@ function drawLayerBevel(
 
   // Sample dominant color of the layer (for rim tinting).
   // Averaged from a 16×16 downsample, mixed 55% toward white for highlight feel.
+  // Cached by tintCacheKey (blobUrl+fill) — only re-sampled when content changes, not on move.
   const layerColor = (() => {
+    if (tintCacheKey) {
+      const hit = layerTintCache.get(tintCacheKey);
+      if (hit) return hit;
+    }
     const s = 16;
-    const tmp = document.createElement('canvas');
-    tmp.width = tmp.height = s;
-    const tc = tmp.getContext('2d')!;
+    if (!(_colorSampleCanvas as any)._ctx) {
+      (_colorSampleCanvas as any)._ctx = _colorSampleCanvas.getContext('2d')!;
+    }
+    const tc = (_colorSampleCanvas as any)._ctx as CanvasRenderingContext2D;
+    tc.clearRect(0, 0, s, s);
     tc.drawImage(contentCanvas, 0, 0, s, s);
     const data = tc.getImageData(0, 0, s, s).data;
     let r = 0, g = 0, b = 0, n = 0;
@@ -443,15 +560,20 @@ function drawLayerBevel(
     if (n === 0) return { r: 255, g: 255, b: 255 };
     r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
     const mix = 0.55;
-    return {
+    const color = {
       r: Math.round(r + (255 - r) * mix),
       g: Math.round(g + (255 - g) * mix),
       b: Math.round(b + (255 - b) * mix),
     };
+    if (tintCacheKey) {
+      layerTintCache.set(tintCacheKey, color);
+      if (layerTintCache.size > 32) layerTintCache.delete(layerTintCache.keys().next().value!);
+    }
+    return color;
   })();
   const lc = (a: number) => `rgba(${layerColor.r},${layerColor.g},${layerColor.b},${a})`;
 
-  // ── [1] ESPECULAR INTERNO ─────────────────────────────────────────────────
+  // ── [1] Inner specular dome ───────────────────────────────────────────────
   {
     const { canvas: domeCv, ctx: dc } = scratch.getCanvas('layer-dome', size);
     dc.drawImage(contentCanvas, 0, 0);
@@ -476,7 +598,7 @@ function drawLayerBevel(
     outCtx.restore();
   }
 
-  // ── [2] BORDA INTERNA COLORIDA (+ buracos internos) ──────────────────────
+  // ── [2] Inner colored rim (+ interior holes) ─────────────────────────────
   {
     const rimW = Math.max(3, size * LAYER_INNER_RIM_WIDTH + blurT * size * 0.010);
     const blur = Math.max(0.6, size * LAYER_INNER_RIM_BLUR);
@@ -558,7 +680,7 @@ function drawLayerBevel(
     }
   }
 
-  // ── [4] SOMBRA INTERNA NO LADO SHADOW ────────────────────────────────────
+  // ── [4] Inner shadow on the shadow side ──────────────────────────────────
   {
     const darkW = Math.max(2, size * LAYER_INNER_SHADOW_WIDTH + blurT * size * 0.006);
     const { canvas: darkCv, ctx: dc } = scratch.getCanvas('layer-inner-shadow', size);
@@ -590,7 +712,7 @@ function drawLayerBevel(
     outCtx.restore();
   }
 
-  // ── [5] BORDA EXTERNA (ring fora da shape, cor da layer) ─────────────────
+  // ── [5] Outer border ring (layer color, outside shape) ───────────────────
   {
     const dilate = Math.max(1.5, size * LAYER_OUTER_BORDER_WIDTH);
     const expand = dilate * 2;
@@ -896,7 +1018,8 @@ async function renderLayerCanvas2D(
   }
 
   // ── 6. Layer bevel (inner bright rim + dark outer border) ────────────────
-  drawLayerBevel(outCtx, contentCanvas, size, lightAngle, liquidGlass, scratch);
+  const _tintKey2D = `${layer.id}:${layer.blobUrl ?? ''}:${layer.fill.type}:${layer.fill.type === 'solid' ? (layer.fill as any).color ?? '' : ''}`;
+  drawLayerBevel(outCtx, contentCanvas, size, lightAngle, _tintKey2D, liquidGlass, scratch);
 
   // ── 7. Directional Inner Shadow (away from light) ─────────────────────────
   {
@@ -960,8 +1083,12 @@ async function buildContentCanvas(
       const x = (size - w) / 2;
       const y = (size - h) / 2;
 
-      // Draw image first (establishes the alpha mask shape)
-      ctx.drawImage(img, x, y, w, h);
+      // Draw image first (establishes the alpha mask shape).
+      // Use hi-res version if available (preloaded at 2048px, synchronous lookup).
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      const drawSource = hiResImgCache.get(layer.blobUrl) ?? img;
+      ctx.drawImage(drawSource, x, y, w, h);
 
       // Apply fill / colour tint clipped to the image's alpha using source-atop.
       // This ensures fill never bleeds outside the icon artwork shape.
@@ -1046,6 +1173,7 @@ async function renderLayerToCanvas(
   background: BackgroundConfig,
   scratch: ScratchPool,
   allowSpecular: boolean,
+  bgKey = '',
 ): Promise<HTMLCanvasElement | null> {
   if (!layer.visible) return null;
 
@@ -1095,7 +1223,7 @@ async function renderLayerToCanvas(
         aberration: 0.65, // always-on chromatic aberration at moderate intensity
       };
 
-      renderer.render(contentCanvas, bgCanvas, params);
+      renderer.render(contentCanvas, bgCanvas, params, bgKey);
       setWebgl2Status('active');
 
       // ── Drop shadow (Canvas 2D, pre-glass) ────────────────────────────────
@@ -1108,7 +1236,8 @@ async function renderLayerToCanvas(
       outCtx.restore();
 
       // ── Layer bevel (inner bright rim + dark outer border) ────────────────
-      drawLayerBevel(outCtx, contentCanvas, size, lightAngle, liquidGlass, scratch);
+      const _tintKeyGL = `${layer.id}:${layer.blobUrl ?? ''}:${layer.fill.type}:${layer.fill.type === 'solid' ? (layer.fill as any).color ?? '' : ''}`;
+      drawLayerBevel(outCtx, contentCanvas, size, lightAngle, _tintKeyGL, liquidGlass, scratch);
 
       return out;
     } catch (err) {
@@ -1134,41 +1263,27 @@ export async function renderIconToCanvas(
   ctx: RenderContext,
 ): Promise<void> {
   const { layers, background, lightAngle, appearanceMode, size } = ctx;
-  const c = outputCanvas.getContext('2d');
-  if (!c) return;
 
   // Reset per-render WebGL indicator (set to active if any layer uses WebGL).
   setWebgl2Status('inactive');
   const scratch = createScratchPool();
   const specularLayerId = findSpecularLayerId(layers);
 
-  outputCanvas.width = outputCanvas.height = size;
-  c.clearRect(0, 0, size, size);
+  // ── Double-buffering: render into scratch canvas, swap atomically at end ──
+  // This prevents white flash when outputCanvas.width/height changes during render.
+  const { canvas: masterCanvas, ctx: c } = getScratchCanvas('master-buffer', size);
 
-  // Build base background canvas
-  // Dark mode: always use the Apple dark system background (#1C1C1E) regardless of bg config
-  const bgCanvas = appearanceMode === 'dark'
-    ? (() => {
-        const cb = document.createElement('canvas');
-        cb.width = cb.height = size;
-        cb.getContext('2d')!.fillStyle = '#1c1c1e';
-        cb.getContext('2d')!.fillRect(0, 0, size, size);
-        return cb;
-      })()
-    : createBackgroundCanvas(background as any, size, size);
+  // Build base background canvas (cached — skips re-creation when bg config unchanged)
+  const darkBg: BackgroundConfig = { type: 'solid', color: '#1c1c1e', colors: ['#1c1c1e', '#1c1c1e'], hue: 0, tint: 0 };
+  const clearBg: BackgroundConfig = { type: 'solid', color: 'rgba(230,230,235,1)', colors: ['rgba(230,230,235,1)', 'rgba(230,230,235,1)'], hue: 0, tint: 0 };
+  const { canvas: bgCanvas, key: bgKey } = appearanceMode === 'dark'
+    ? getCachedBgCanvas(darkBg, size)
+    : getCachedBgCanvas(background, size);
 
   // For glass blur in clear mode, use a neutral light background (simulates wallpaper)
-  // The actual icon composite will be on transparent — bgCanvas only feeds the glass blur
-  const glassBgCanvas = appearanceMode === 'clear'
-    ? (() => {
-        const cb = document.createElement('canvas');
-        cb.width = cb.height = size;
-        const cc = cb.getContext('2d')!;
-        cc.fillStyle = 'rgba(230,230,235,1)';
-        cc.fillRect(0, 0, size, size);
-        return cb;
-      })()
-    : bgCanvas;
+  const { canvas: glassBgCanvas, key: glassBgKey } = appearanceMode === 'clear'
+    ? getCachedBgCanvas(clearBg, size)
+    : { canvas: bgCanvas, key: bgKey };
 
 
   // ── Squircle drop shadow (default/dark only — clear mode exports as transparent PNG) ──
@@ -1236,6 +1351,7 @@ export async function renderIconToCanvas(
           background,
           scratch,
           child.id === specularLayerId,
+          glassBgKey,
         );
         if (lc) {
           gc.drawImage(lc, 0, 0);
@@ -1257,6 +1373,7 @@ export async function renderIconToCanvas(
         background,
         scratch,
         layer.id === specularLayerId,
+        glassBgKey,
       );
       if (lc) {
         c.drawImage(lc, 0, 0);
@@ -1272,7 +1389,7 @@ export async function renderIconToCanvas(
   //
   //  Visual map (what you SEE on the icon, not code internals):
   //
-  //  [A] BORDA INTERNA COLORIDA — thick stroke just inside the squircle edge.
+  //  [A] Inner colored rim — thick stroke just inside the squircle edge.
   //      This is the prominent colored/white ring visible all around the icon border.
   //      Color = bg color (so blue bg → blue rim, orange → orange rim).
   //      Stronger on the lit side, softer on the shadow side.
@@ -1280,7 +1397,7 @@ export async function renderIconToCanvas(
   //  [B] GLARE — tiny bright white hotspot at the lit corner only.
   //      Very thin, always white — simulates sharp specular on the bevel tip.
   //
-  //  [C] SOMBRA BORDA (dark outer stroke) — darkens the outer pixel of the squircle.
+  //  [C] Shadow border (dark outer stroke) — darkens the outer pixel of the squircle.
   //      Strongest on the shadow side. Creates the "raised" depth illusion.
   //
   {
@@ -1290,24 +1407,34 @@ export async function renderIconToCanvas(
 
     // Sample bg color for [A]. Mix lightly toward white (25%) so it reads as a
     // highlight, not the flat fill. Lower mix = more saturated/vivid color in the rim.
+    // Dark & Clear modes: use neutral white rim (bg color is near-black / irrelevant).
     const bgSample = (() => {
-      const s = 16;
-      const tmp = document.createElement('canvas');
-      tmp.width = tmp.height = s;
-      const tc = tmp.getContext('2d')!;
-      tc.drawImage(bgCanvas, 0, 0, s, s);
-      const data = tc.getImageData(0, 0, s, s).data;
-      let r = 0, g = 0, b = 0, n = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        if (data[i + 3] > 30) { r += data[i]; g += data[i + 1]; b += data[i + 2]; n++; }
+      if (appearanceMode === 'dark' || appearanceMode === 'clear') {
+        return { r: 255, g: 255, b: 255 };
       }
-      if (n === 0) return { r: 255, g: 255, b: 255 };
-      r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+
+      let r = 255, g = 255, b = 255;
+
+      if (background.bgType === 'custom' && background.stops && background.stops.length > 0) {
+        const rgb = hexToRgb(background.stops[0].color);
+        if (rgb) { r = rgb.r; g = rgb.g; b = rgb.b; }
+      } else if (background.hue !== undefined && background.tint !== undefined) {
+        const h = background.hue;
+        const s = Math.round(85 * (1 - background.tint / 100));
+        const l = Math.min(100, Math.round((48 + background.tint * 0.52) * (background.brightness ?? 100) / 100));
+        const rgb = hslToRgb(h, s, l);
+        r = rgb.r; g = rgb.g; b = rgb.b;
+      } else if (background.colors && background.colors[0]) {
+        const rgb = parseHslString(background.colors[0]);
+        if (rgb) { r = rgb.r; g = rgb.g; b = rgb.b; }
+      }
+
       // Boost saturation before mixing toward white
       const avg = (r + g + b) / 3;
-      r = Math.min(255, Math.round(avg + (r - avg) * 1.5));
-      g = Math.min(255, Math.round(avg + (g - avg) * 1.5));
-      b = Math.min(255, Math.round(avg + (b - avg) * 1.5));
+      r = Math.min(255, Math.max(0, Math.round(avg + (r - avg) * 1.5)));
+      g = Math.min(255, Math.max(0, Math.round(avg + (g - avg) * 1.5)));
+      b = Math.min(255, Math.max(0, Math.round(avg + (b - avg) * 1.5)));
+
       // Mix 25% toward white — keeps vivid color while being readable as a highlight
       const mix = 0.25;
       return {
@@ -1318,7 +1445,7 @@ export async function renderIconToCanvas(
     })();
     const bg = (a: number) => `rgba(${bgSample.r},${bgSample.g},${bgSample.b},${a})`;
 
-    // [A] BORDA INTERNA COLORIDA
+    // [A] Inner colored rim
     // Thick stroke running just inside the squircle boundary, colored with bg.
     // Lit side is bright, shadow side fades to ~30% intensity (still visible = depth).
     {
@@ -1366,7 +1493,7 @@ export async function renderIconToCanvas(
       c.restore();
     }
 
-    // [C] SOMBRA BORDA — dark outer stroke at the squircle boundary, shadow side
+    // [C] Shadow border — dark outer stroke at the squircle boundary, shadow side
     {
       const grad = c.createLinearGradient(
         size * (0.5 - lx * 0.5), size * (0.5 - ly * 0.5),  // shadow corner
@@ -1414,6 +1541,11 @@ export async function renderIconToCanvas(
     c.restore();
   }
 
+  // ── Atomic swap: resize output canvas and copy result in one operation ─────
+  // Resizing here (not at the start) prevents a blank frame during async rendering.
+  outputCanvas.width = outputCanvas.height = size;
+  const outCtx = outputCanvas.getContext('2d');
+  if (outCtx) outCtx.drawImage(masterCanvas, 0, 0);
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { $layers, updateLayer, updateLayerFill } from '../../store/iconStore';
 import { $selectedLayerId } from '../../store/uiStore';
@@ -47,32 +47,38 @@ export function ColorSection() {
   // Local state for performant colour dragging without choking the webGL store
   const [localSolidColor, setLocalSolidColor] = useState<string>('#ffffff');
   const debouncedSolidColor = useDebounce(localSolidColor, 10);
-  
+
   const [localStops, setLocalStops] = useState<{offset: number, color: string}[]>([]);
   const debouncedStops = useDebounce(localStops, 10);
 
-  // Sync local state when external layer selection or store changes (not caused by ourselves)
-  useEffect(() => {
-    if (layer?.fill.type === 'solid' && layer.fill.color !== debouncedSolidColor) {
+  // Track whether the debounced sync is from user input (not from initialization)
+  const skipSolidSync = useRef(true);
+  const skipStopsSync = useRef(true);
+
+  // Initialize local state from layer BEFORE paint (prevents white flash on layer switch)
+  useLayoutEffect(() => {
+    if (layer?.fill.type === 'solid') {
+      skipSolidSync.current = true;
       setLocalSolidColor(layer.fill.color ?? '#ffffff');
     } else if (layer?.fill.type === 'gradient' && 'stops' in layer.fill) {
-      // Only sync if different to avoid loop
-      const same = localStops.length === layer.fill.stops.length && 
-                   localStops.every((s, i) => s.color === layer.fill.stops[i].color);
-      if (!same) setLocalStops(layer.fill.stops);
+      skipStopsSync.current = true;
+      setLocalStops(layer.fill.stops as typeof localStops);
     }
-  }, [layer?.id, layer?.fill]);
+  }, [layer?.id, layer?.fill.type]);
 
-  // Sync debounced values up to global store
+  // Sync debounced solid color to store (skip on initialization)
   useEffect(() => {
     if (!layer) return;
+    if (skipSolidSync.current) { skipSolidSync.current = false; return; }
     if (layer.fill.type === 'solid' && debouncedSolidColor !== layer.fill.color) {
       updateLayerFill(layer.id, { type: 'solid', color: debouncedSolidColor });
     }
   }, [debouncedSolidColor]);
 
+  // Sync debounced gradient stops to store (skip on initialization)
   useEffect(() => {
     if (!layer || layer.fill.type !== 'gradient' || !('stops' in layer.fill)) return;
+    if (skipStopsSync.current) { skipStopsSync.current = false; return; }
     if (debouncedStops.length > 0) {
       updateLayerFill(layer.id, { type: 'gradient', stops: debouncedStops, angle: layer.fill.angle });
     }
@@ -156,25 +162,39 @@ export function ColorSection() {
 
           {fill.type === 'gradient' && 'stops' in fill && (
             <div className="space-y-1.5">
-              <span className="text-xs text-[#636366]">Gradient Stops</span>
-              {localStops.map((stop, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={stop.color}
-                    onChange={(e) => {
-                      const newStops = [...localStops];
-                      newStops[i] = { ...newStops[i], color: e.target.value };
-                      setLocalStops(newStops);
-                    }}
-                    className="w-7 h-6 rounded cursor-pointer bg-transparent border-0"
-                  />
-                  <div
-                    className="h-3 flex-1 rounded"
-                    style={{ background: `linear-gradient(90deg, ${localStops.map((s) => s.color).join(', ')})` }}
-                  />
-                </div>
-              ))}
+              {/* Gradient preview */}
+              <div
+                className="w-full h-4 rounded-md"
+                style={{ background: `linear-gradient(90deg, ${(localStops[0]?.color ?? '#fff')}, ${(localStops[1]?.color ?? '#000')})` }}
+              />
+              {/* Fixed 2 color stops */}
+              {[0, 1].map((i) => {
+                const stop = localStops[i] ?? { offset: i, color: i === 0 ? '#ffffff' : '#000000' };
+                return (
+                  <div key={i} className="flex items-center gap-2 min-w-0">
+                    <input
+                      type="color"
+                      value={stop.color}
+                      onChange={(e) => {
+                        const newStops = [...localStops];
+                        newStops[i] = { ...newStops[i], color: e.target.value };
+                        setLocalStops(newStops);
+                      }}
+                      className="w-7 h-6 shrink-0 rounded cursor-pointer bg-transparent border-0"
+                    />
+                    <input
+                      type="text"
+                      value={stop.color}
+                      onChange={(e) => {
+                        const newStops = [...localStops];
+                        newStops[i] = { ...newStops[i], color: e.target.value };
+                        setLocalStops(newStops);
+                      }}
+                      className="flex-1 min-w-0 text-xs bg-[#2a2a2a] border border-[#3a3a3c] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
+                    />
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
