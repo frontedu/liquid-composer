@@ -92,11 +92,30 @@ function drawFullscreenQuad(gl: WebGL2RenderingContext, vao: WebGLVertexArrayObj
 
 // ─── Renderer class ───────────────────────────────────────────────────────────
 
+// Cached uniform locations for a program — avoids gl.getUniformLocation() every frame
+interface UniformCache {
+  // blur program
+  blur_uTex: WebGLUniformLocation | null;
+  blur_uTexelSize: WebGLUniformLocation | null;
+  blur_uRadius: WebGLUniformLocation | null;
+  blur_uHorizontal: WebGLUniformLocation | null;
+  blur_uSaturate: WebGLUniformLocation | null;
+  // glass program
+  glass_uLayerTex: WebGLUniformLocation | null;
+  glass_uBlurredBgTex: WebGLUniformLocation | null;
+  glass_uOrigBgTex: WebGLUniformLocation | null;
+  glass_uParams1: WebGLUniformLocation | null;
+  glass_uParams2: WebGLUniformLocation | null;
+  glass_uTexelSize: WebGLUniformLocation | null;
+  glass_uLightDir: WebGLUniformLocation | null;
+}
+
 export class LiquidGlassRenderer {
   private gl: WebGL2RenderingContext;
   private blurProg: WebGLProgram;
   private glassProg: WebGLProgram;
   private vao: WebGLVertexArrayObject;
+  private uniforms: UniformCache;
 
   // Ping-pong FBOs for 2-pass blur
   private texA: WebGLTexture;
@@ -109,6 +128,7 @@ export class LiquidGlassRenderer {
   private origBgTex: WebGLTexture;
 
   private size: number;
+  private _lastBgKey: string = '';
 
   constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', {
@@ -123,6 +143,22 @@ export class LiquidGlassRenderer {
 
     this.blurProg  = createProgram(gl, BLUR_SRC);
     this.glassProg = createProgram(gl, GLASS_SRC);
+
+    // Cache all uniform locations once — avoids redundant driver lookups per frame
+    this.uniforms = {
+      blur_uTex:        gl.getUniformLocation(this.blurProg,  'uTex'),
+      blur_uTexelSize:  gl.getUniformLocation(this.blurProg,  'uTexelSize'),
+      blur_uRadius:     gl.getUniformLocation(this.blurProg,  'uRadius'),
+      blur_uHorizontal: gl.getUniformLocation(this.blurProg,  'uHorizontal'),
+      blur_uSaturate:   gl.getUniformLocation(this.blurProg,  'uSaturate'),
+      glass_uLayerTex:     gl.getUniformLocation(this.glassProg, 'uLayerTex'),
+      glass_uBlurredBgTex: gl.getUniformLocation(this.glassProg, 'uBlurredBgTex'),
+      glass_uOrigBgTex:    gl.getUniformLocation(this.glassProg, 'uOrigBgTex'),
+      glass_uParams1:      gl.getUniformLocation(this.glassProg, 'uParams1'),
+      glass_uParams2:      gl.getUniformLocation(this.glassProg, 'uParams2'),
+      glass_uTexelSize:    gl.getUniformLocation(this.glassProg, 'uTexelSize'),
+      glass_uLightDir:     gl.getUniformLocation(this.glassProg, 'uLightDir'),
+    };
 
     // VAO + buffers (fullscreen quad, shared by all passes)
     this.vao = gl.createVertexArray()!;
@@ -163,13 +199,17 @@ export class LiquidGlassRenderer {
   }
 
   // ── 2-pass Gaussian blur on bgSource → texB ─────────────────────────────────
-  private blurBackground(bgSource: TexImageSource, radius: number, saturate: boolean) {
+  private blurBackground(bgSource: TexImageSource, radius: number, saturate: boolean, bgKey: string) {
+    if (bgKey && bgKey === this._lastBgKey) return;  // skip if bg unchanged
+    this._lastBgKey = bgKey;
     const { gl } = this;
     const sz = this.size;
     const texelSize = 1.0 / sz;
 
     // Upload original bg to origBgTex (used in glass pass for sharp background)
     uploadSourceTexture(gl, this.origBgTex, bgSource);
+
+    const u = this.uniforms;
 
     // Horizontal pass: origBgTex → fboA
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboA);
@@ -179,11 +219,11 @@ export class LiquidGlassRenderer {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.origBgTex);
-    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uTex'), 0);
-    gl.uniform2f(gl.getUniformLocation(this.blurProg, 'uTexelSize'), texelSize, texelSize);
-    gl.uniform1f(gl.getUniformLocation(this.blurProg, 'uRadius'), radius);
-    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uHorizontal'), 1);
-    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uSaturate'), saturate ? 1 : 0);
+    gl.uniform1i(u.blur_uTex, 0);
+    gl.uniform2f(u.blur_uTexelSize, texelSize, texelSize);
+    gl.uniform1f(u.blur_uRadius, radius);
+    gl.uniform1i(u.blur_uHorizontal, 1);
+    gl.uniform1i(u.blur_uSaturate, saturate ? 1 : 0);
     drawFullscreenQuad(gl, this.vao);
 
     // Vertical pass: texA → fboB
@@ -192,24 +232,24 @@ export class LiquidGlassRenderer {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texA);
-    gl.uniform1f(gl.getUniformLocation(this.blurProg, 'uRadius'), radius);
-    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uHorizontal'), 0);
-    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uSaturate'), saturate ? 1 : 0);
+    gl.uniform1f(u.blur_uRadius, radius);
+    gl.uniform1i(u.blur_uHorizontal, 0);
+    gl.uniform1i(u.blur_uSaturate, saturate ? 1 : 0);
     drawFullscreenQuad(gl, this.vao);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  render(layerSource: TexImageSource, bgSource: TexImageSource, params: LiquidGlassParams) {
+  render(layerSource: TexImageSource, bgSource: TexImageSource, params: LiquidGlassParams, bgKey = '') {
     const { gl } = this;
     const sz = this.size;
 
     // Compute blur radius in texel units (0 = no blur)
     const blurRadius = params.blur * sz * 0.028;
 
-    // Always re-blur bg — each layer may have different blur strength,
-    // and the 2-pass Gaussian is fast enough to run per layer
-    this.blurBackground(bgSource, blurRadius, params.mode === 1);
+    // Re-blur bg only if bgKey changed — skips redundant GPU upload+blur for same background
+    const effectiveBgKey = `${bgKey}:${blurRadius.toFixed(2)}:${params.mode}`;
+    this.blurBackground(bgSource, blurRadius, params.mode === 1, effectiveBgKey);
 
     // Upload layer texture
     uploadSourceTexture(gl, this.layerTex, layerSource);
@@ -221,33 +261,26 @@ export class LiquidGlassRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.glassProg);
 
-    const p = this.glassProg;
+    const u = this.uniforms;
     const texelSize = 1.0 / sz;
+    const angleRad = (params.lightAngle * Math.PI) / 180;
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.layerTex);
-    gl.uniform1i(gl.getUniformLocation(p, 'uLayerTex'), 0);
+    gl.uniform1i(u.glass_uLayerTex, 0);
 
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.texB);  // blurred bg
-    gl.uniform1i(gl.getUniformLocation(p, 'uBlurredBgTex'), 1);
+    gl.bindTexture(gl.TEXTURE_2D, this.texB);
+    gl.uniform1i(u.glass_uBlurredBgTex, 1);
 
     gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.origBgTex);  // sharp bg
-    gl.uniform1i(gl.getUniformLocation(p, 'uOrigBgTex'), 2);
+    gl.bindTexture(gl.TEXTURE_2D, this.origBgTex);
+    gl.uniform1i(u.glass_uOrigBgTex, 2);
 
-    gl.uniform1f(gl.getUniformLocation(p, 'uBlur'),        params.blur);
-    gl.uniform1f(gl.getUniformLocation(p, 'uTranslucency'), params.translucency);
-    gl.uniform1f(gl.getUniformLocation(p, 'uSpecular'),    params.specular ? params.specularIntensity : 0.0);
-    gl.uniform1f(gl.getUniformLocation(p, 'uOpacity'),     params.opacity);
-    gl.uniform1i(gl.getUniformLocation(p, 'uMode'),        params.mode);
-    gl.uniform1f(gl.getUniformLocation(p, 'uDarkAdjust'),  params.darkAdjust);
-    gl.uniform1f(gl.getUniformLocation(p, 'uMonoAdjust'),  params.monoAdjust);
-    gl.uniform1f(gl.getUniformLocation(p, 'uAberration'),  params.aberration);
-    gl.uniform2f(gl.getUniformLocation(p, 'uTexelSize'),   texelSize, texelSize);
-
-    const angleRad = (params.lightAngle * Math.PI) / 180;
-    gl.uniform2f(gl.getUniformLocation(p, 'uLightDir'), Math.cos(angleRad), Math.sin(angleRad));
+    gl.uniform4f(u.glass_uParams1, params.blur, params.translucency, params.specular ? params.specularIntensity : 0.0, params.opacity);
+    gl.uniform4f(u.glass_uParams2, params.darkAdjust, params.monoAdjust, params.aberration, params.mode);
+    gl.uniform2f(u.glass_uTexelSize, texelSize, texelSize);
+    gl.uniform2f(u.glass_uLightDir, Math.cos(angleRad), Math.sin(angleRad));
 
     drawFullscreenQuad(gl, this.vao);
   }

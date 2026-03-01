@@ -1,11 +1,11 @@
-import { defineConfig } from 'astro/config';
-import react from '@astrojs/react';
-import tailwind from '@astrojs/tailwind';
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
 
 // Vite plugin: treat .glsl files as raw strings (importable with ?raw)
 const glslRaw = {
   name: 'glsl-raw',
-  transform(src, id) {
+  transform(src: string, id: string) {
     if (/\.(glsl|vert|frag)$/.test(id)) {
       return { code: `export default ${JSON.stringify(src)};`, map: null };
     }
@@ -13,13 +13,10 @@ const glslRaw = {
 };
 
 export default defineConfig({
-  integrations: [
-    react(),
-    tailwind({
-      applyBaseStyles: false,
-    }),
-  ],
-  vite: {
-    plugins: [glslRaw],
+  plugins: [react(), glslRaw],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
   },
 });

@@ -18,12 +18,14 @@ export const LIGHT_ANGLE_LABELS: Record<number, string> = {
 };
 
 export const $selectedLayerId = atom<string | null>(null);
+export const $hoveredLayerId = atom<string | null>(null);
 export const $appearanceMode = atom<AppearanceMode>('default');
 export const $lightAngle = atom<number>(135);
 export const $zoom = atom<number>(100);
 export const $inspectorTab = atom<'brush' | 'document'>('brush');
 export const $isDragOver = atom<boolean>(false);
 export const $showBackgroundPicker = atom<boolean>(false);
+export const $persistenceEnabled = atom<boolean>(true);
 export type Webgl2Status = 'inactive' | 'active' | 'error';
 export const $webgl2Status = atom<Webgl2Status>('inactive');
 export const $webgl2Error = atom<string>('');

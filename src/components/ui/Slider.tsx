@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 
 interface SliderProps {
   value: number;
@@ -24,6 +24,9 @@ export function Slider({
   const safeValue = isNaN(value) ? min : value;
   // Local string for the number input — only commit on blur or Enter
   const [inputVal, setInputVal] = useState(String(safeValue));
+  // RAF throttle: update store at most once per animation frame
+  const rafRef = useRef<number>(0);
+  const pendingVal = useRef<number>(safeValue);
 
   // Sync from outside (e.g. drag on range input)
   useEffect(() => {
@@ -45,7 +48,17 @@ export function Slider({
   );
 
   const handleInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => onChange(Number(e.target.value)),
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newVal = Number(e.target.value);
+      pendingVal.current = newVal;
+      setInputVal(String(newVal)); // instant UI feedback
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = 0;
+          onChange(pendingVal.current);
+        });
+      }
+    },
     [onChange],
   );
 

@@ -25,6 +25,8 @@ export function NumberInput({
   dragSensitivity = 1,
 }: NumberInputProps) {
   const startRef = useRef<{ x: number; val: number } | null>(null);
+  const rafRef = useRef<number>(0);
+  const pendingVal = useRef<number>(value);
 
   const clamp = useCallback(
     (v: number) => {
@@ -43,7 +45,13 @@ export function NumberInput({
       const onMove = (ev: MouseEvent) => {
         if (!startRef.current) return;
         const dx = ev.clientX - startRef.current.x;
-        onChange(clamp(startRef.current.val + dx * dragSensitivity));
+        pendingVal.current = clamp(startRef.current.val + dx * dragSensitivity);
+        if (!rafRef.current) {
+          rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = 0;
+            onChange(pendingVal.current);
+          });
+        }
       };
       const onUp = () => {
         startRef.current = null;

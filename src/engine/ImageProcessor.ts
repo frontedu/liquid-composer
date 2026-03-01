@@ -69,7 +69,7 @@ export function drawSquirclePathToPath2D(size: number, n = 5): Path2D {
 }
 
 export function createBackgroundCanvas(
-  config: { type: string; colors?: [string, string]; color?: string; angle?: number },
+  config: { type: string; bgType?: 'preset' | 'custom'; stops?: { offset: number; color: string }[]; colors?: [string, string]; color?: string; angle?: number },
   width: number,
   height: number
 ): HTMLCanvasElement {
@@ -78,8 +78,8 @@ export function createBackgroundCanvas(
   canvas.height = height;
   const ctx = canvas.getContext('2d')!;
 
-  if (config.type === 'gradient' && config.colors) {
-    const angle = ((config.angle ?? 135) * Math.PI) / 180;
+  if (config.type === 'gradient' && (config.stops || config.colors)) {
+    const angle = ((config.angle ?? 90) * Math.PI) / 180;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const r = Math.sqrt(width * width + height * height) / 2;
@@ -89,8 +89,16 @@ export function createBackgroundCanvas(
       cx - cos * r, cy - sin * r,
       cx + cos * r, cy + sin * r
     );
-    grad.addColorStop(0, config.colors[0]);
-    grad.addColorStop(1, config.colors[1]);
+    
+    if (config.bgType === 'custom' && config.stops && config.stops.length > 0) {
+      config.stops.forEach((stop) => {
+        grad.addColorStop(Math.max(0, Math.min(1, stop.offset)), stop.color);
+      });
+    } else if (config.colors) {
+      grad.addColorStop(0, config.colors[0]);
+      grad.addColorStop(1, config.colors[1]);
+    }
+    
     ctx.fillStyle = grad;
   } else if (config.type === 'solid' && config.color) {
     ctx.fillStyle = config.color;

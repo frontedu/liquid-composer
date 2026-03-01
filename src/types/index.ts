@@ -76,6 +76,8 @@ export type BackgroundPreset = 'warm' | 'cool' | 'forest' | 'ocean' | 'sunset' |
 
 export interface BackgroundConfig {
   type: 'gradient' | 'solid' | 'image';
+  bgType?: 'preset' | 'custom';
+  stops?: ColorStop[];
   preset?: BackgroundPreset;
   color?: string;
   colors?: [string, string]; // gradient start/end

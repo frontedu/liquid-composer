@@ -19,7 +19,6 @@ export function BottomBar() {
         style={{
           background: 'rgba(255,255,255,0.055)',
           border: '0.5px solid rgba(255,255,255,0.10)',
-          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.4)',
           backdropFilter: 'blur(20px) saturate(180%)',
           WebkitBackdropFilter: 'blur(20px) saturate(180%)',
         }}
@@ -36,7 +35,6 @@ export function BottomBar() {
                   ? {
                       color: '#ffffff',
                       background: 'linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.10) 100%)',
-                      boxShadow: '0 1px 4px rgba(0,0,0,0.4), 0 0.5px 0 rgba(255,255,255,0.22) inset',
                     }
                   : {
                       color: 'rgba(255,255,255,0.32)',

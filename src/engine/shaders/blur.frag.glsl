@@ -11,9 +11,9 @@ uniform bool  uSaturate;
 
 out vec4 fragColor;
 
-// Linear <-> sRGB conversion for physically correct blur blending
-vec3 toLinear(vec3 srgb) { return pow(srgb, vec3(2.2)); }
-vec3 toSRGB(vec3 lin)    { return pow(lin, vec3(1.0 / 2.2)); }
+// Fast sRGB→linear approximation (x^2 ≈ x^2.2, avoids costly pow())
+// Only needed on horizontal pass — vertical pass receives data already in linear space.
+vec3 toLinear(vec3 srgb) { vec3 s = max(srgb, 0.0); return s * s; }
 
 // 9-tap weights (symmetric, normalised so sum = 1)
 const float W[9] = float[](0.028, 0.067, 0.124, 0.179, 0.204, 0.179, 0.124, 0.067, 0.028);
@@ -21,7 +21,7 @@ const float W[9] = float[](0.028, 0.067, 0.124, 0.179, 0.204, 0.179, 0.124, 0.06
 void main() {
   if (uRadius < 0.5) {
     vec4 s = texture(uTex, vUV);
-    s.rgb = toLinear(s.rgb);
+    if (uHorizontal) s.rgb = toLinear(s.rgb);  // only decode sRGB on pass 1
     fragColor = s;
     return;
   }
@@ -33,8 +33,9 @@ void main() {
       ? vec2(offset * uTexelSize.x, 0.0)
       : vec2(0.0, offset * uTexelSize.y);
     vec4 s = texture(uTex, clamp(vUV + off, 0.0005, 0.9995));
-    // Blur in linear space for physically correct blending
-    s.rgb = toLinear(s.rgb);
+    // Pass 1 (horizontal): decode sRGB → linear for correct blending.
+    // Pass 2 (vertical): input is already linear from HDR FBO — skip decode.
+    if (uHorizontal) s.rgb = toLinear(s.rgb);
     sum += s * W[i];
   }
   // Keep output in LINEAR space — glass composite expects linear input.
