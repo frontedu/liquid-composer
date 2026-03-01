@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
+import { fileURLToPath } from 'url';
 
 // Vite plugin: treat .glsl files as raw strings (importable with ?raw)
 const glslRaw = {
@@ -16,7 +16,7 @@ export default defineConfig({
   plugins: [react(), glslRaw],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
 });
