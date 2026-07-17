@@ -17,10 +17,10 @@ export function CompositionSection() {
   const isGroup = layer.type === 'group';
 
   return (
-    <div className="border-b border-[#2c2c2e] pb-5">
+    <div className="border-b border-white/[0.07] pb-5">
       <div className="flex items-center justify-between px-3 py-3">
         <span className="text-xs font-semibold text-[#ebebf5]">Composition</span>
-        <span className="text-2xs text-[#636366] bg-[#2a2a2a] px-1.5 py-0.5 rounded">All</span>
+        <span className="text-2xs text-[#636366] bg-white/[0.07] px-1.5 py-0.5 rounded">All</span>
       </div>
 
       <div className="px-3 space-y-3">
@@ -32,13 +32,12 @@ export function CompositionSection() {
         {!isGroup && layer.sourceFile && (
           <div className="flex items-center gap-2">
             <span className="text-xs text-[#636366] w-12 shrink-0">Image</span>
-            <span className="flex-1 text-xs text-[#ebebf5] truncate bg-[#2a2a2a] px-2 py-1 rounded border border-[#3a3a3c]">
+            <span className="flex-1 text-xs text-[#ebebf5] truncate bg-white/[0.06] px-2 py-1 rounded border border-white/[0.08]">
               {layer.sourceFile}
             </span>
           </div>
         )}
 
-        {/* Position and Scale — layers only */}
         {!isGroup && (
           <>
             <div className="flex items-center gap-2">

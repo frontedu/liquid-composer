@@ -46,7 +46,6 @@ export function setZoom(zoom: number) {
   $zoom.set(Math.min(200, Math.max(10, zoom)));
 }
 
-// Step to the next (direction > 0) or previous (direction < 0) zoom level
 export function stepZoom(direction: number) {
   const current = $zoom.get();
   if (direction > 0) {

@@ -10,15 +10,12 @@ import {
   LIGHT_ANGLE_LEVELS, LIGHT_ANGLE_LABELS, $webgl2Status, $webgl2Error,
 } from '../../store/uiStore';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 /** Convert internal angle (0°=right, CCW positive) to display angle (0°=top, CW positive).
  *  e.g. 135 → -45,  45 → +45,  90 → 0,  180 → -90 */
 function toDisplayAngle(a: number): number {
   return ((90 - a + 540) % 360) - 180;
 }
 
-/** Extract hue (0–360), saturation (0–100) and lightness (0–100) from hex. */
 function hexToHSL(hex: string): { h: number; s: number; l: number } {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
@@ -54,8 +51,6 @@ const PRESET_COLORS = [
   { hex: '#48484A', label: 'Dark Gray'  },
   { hex: '#1C1C1E', label: 'Near Black'  },
 ];
-
-// ─── Gradient slider ──────────────────────────────────────────────────────────
 
 function GradientSlider({
   value, min, max, trackGradient, thumbColor, onChange, onRelease,
@@ -119,8 +114,6 @@ function GradientSlider({
     </div>
   );
 }
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 export function TopToolbar() {
   const name        = useStore($iconName);
@@ -193,7 +186,6 @@ export function TopToolbar() {
     }, 33);
   }, []);
 
-  // ── Sync local state from store when picker opens ────────────────────────
   // useState initializer only runs once; if persistence loads after mount the
   // local values would be stale. Re-sync every time the picker is opened.
   useEffect(() => {
@@ -213,7 +205,6 @@ export function TopToolbar() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showBgPicker]); // only on open/close, not on every store change
 
-  // ── Click-outside handler ─────────────────────────────────────────────────
   useEffect(() => {
     if (!showBgPicker && !showZoomMenu && !showLightMenu) return;
     const handle = (e: MouseEvent) => {
@@ -228,7 +219,6 @@ export function TopToolbar() {
     return () => document.removeEventListener('mousedown', handle);
   }, [showBgPicker, showZoomMenu, showLightMenu]);
 
-  // ── Icon name ─────────────────────────────────────────────────────────────
   const commitName = () => { setIconName(nameInput); setEditingName(false); };
   const cancelName = () => setEditingName(false);
 
@@ -299,7 +289,6 @@ export function TopToolbar() {
     document.addEventListener('mouseup', onUp);
   }, []);
 
-  // ── Background ───────────────────────────────────────────────────────────
   const handleHueChange = (h: number) => {
     setLocalHue(h);
     bgValuesRef.current.hue = h;
@@ -359,13 +348,12 @@ export function TopToolbar() {
     <div
       className="flex items-center h-11 px-3 select-none relative z-20"
       style={{
-        background: 'rgba(22,22,24,0.82)',
+        background: 'rgba(13,13,16,0.85)',
         backdropFilter: 'blur(32px) saturate(200%)',
         WebkitBackdropFilter: 'blur(32px) saturate(200%)',
         borderBottom: '0.5px solid rgba(255,255,255,0.07)',
       }}
     >
-      {/* Left — icon name */}
       <div className="flex items-center gap-2 min-w-[160px]">
         {editingName ? (
           <input
@@ -393,10 +381,8 @@ export function TopToolbar() {
         )}
       </div>
 
-      {/* Center — tools */}
       <div className="flex-1 flex items-center justify-center gap-2">
 
-        {/* ── Background picker ── */}
         <div ref={bgPickerRef} className="relative">
           <button
             onClick={() => setShowBgPicker(!showBgPicker)}
@@ -423,7 +409,6 @@ export function TopToolbar() {
                 boxShadow: '0 8px 40px rgba(0,0,0,0.6), inset 0 0.5px 0 rgba(255,255,255,0.08)',
               }}
             >
-              {/* ── Type tabs — always at the very top ── */}
               <div className="flex border-b border-white/[0.06]">
                 <button
                   className={`flex-1 text-[11px] font-semibold py-2.5 transition-all ${
@@ -458,7 +443,6 @@ export function TopToolbar() {
               </div>
 
               {localBgType === 'preset' ? (
-                /* ── SOLID mode ─────────────────────────────────────── */
                 <div className="p-4 space-y-4">
                   {/* Clickable preview → native color picker */}
                   <div className="relative group">
@@ -482,7 +466,6 @@ export function TopToolbar() {
                     />
                   </div>
 
-                  {/* Preset swatches */}
                   <div>
                     <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.28)' }}>
                       Presets
@@ -503,7 +486,6 @@ export function TopToolbar() {
                     </div>
                   </div>
 
-                  {/* Hue slider */}
                   <div>
                     <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.28)' }}>Hue</span>
                     <GradientSlider
@@ -515,7 +497,6 @@ export function TopToolbar() {
                     />
                   </div>
 
-                  {/* Tint slider */}
                   <div>
                     <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.28)' }}>Tint</span>
                     <GradientSlider
@@ -527,7 +508,6 @@ export function TopToolbar() {
                     />
                   </div>
 
-                  {/* Brightness slider */}
                   <div>
                     <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.28)' }}>Brightness</span>
                     <GradientSlider
@@ -540,21 +520,17 @@ export function TopToolbar() {
                   </div>
                 </div>
               ) : (
-                /* ── GRADIENT mode ──────────────────────────────────── */
                 <div className="p-4 space-y-3">
-                  {/* Gradient preview — full width */}
                   <div
                     className="w-full h-9 rounded-[10px]"
                     style={{ background: bgPreview, boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.12)' }}
                   />
 
-                  {/* Fixed 2 stops — each fills full width */}
                   <div className="space-y-2">
                     {[0, 1].map((i) => {
                       const stop = localStops[i] ?? { offset: i, color: i === 0 ? '#2a2a2e' : '#1a1a1e' };
                       return (
                         <div key={i} className="flex items-center gap-2 w-full">
-                          {/* Color swatch */}
                           <div className="relative w-7 h-7 shrink-0 rounded-[6px] overflow-hidden" style={{ boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.15)' }}>
                             <input
                               type="color"
@@ -564,7 +540,6 @@ export function TopToolbar() {
                             />
                             <div className="absolute inset-0 pointer-events-none" style={{ background: stop.color }} />
                           </div>
-                          {/* Hex input — fills remaining space */}
                           <input
                             type="text"
                             value={stop.color.toUpperCase()}
@@ -581,10 +556,8 @@ export function TopToolbar() {
           )}
         </div>
 
-        {/* Divider */}
         <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.08)' }} />
 
-        {/* ── Light angle ── */}
         <div ref={lightMenuRef} className="relative">
           <button
             onClick={() => setShowLightMenu(!showLightMenu)}
@@ -631,10 +604,8 @@ export function TopToolbar() {
           )}
         </div>
 
-        {/* Divider */}
         <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.08)' }} />
 
-        {/* ── Zoom ── */}
         <div ref={zoomMenuRef} className="relative">
           <button
             onClick={() => setShowZoomMenu(!showZoomMenu)}
@@ -682,7 +653,6 @@ export function TopToolbar() {
         </div>
       </div>
 
-      {/* Right — Export */}
       <div className="flex items-center gap-2 min-w-[160px] justify-end">
         <div className="relative group flex items-center">
           <span

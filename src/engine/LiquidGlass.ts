@@ -1,5 +1,3 @@
-// ─── WebGL2 Liquid Glass Renderer ────────────────────────────────────────────
-//
 // Multi-pass pipeline:
 //   Pass 1: Horizontal separable Gaussian blur  (bg → FBO_A)
 //   Pass 2: Vertical separable Gaussian blur    (FBO_A → FBO_B)
@@ -8,8 +6,6 @@
 import VERT_SRC  from './shaders/vertex.vert.glsl';
 import BLUR_SRC  from './shaders/blur.frag.glsl';
 import GLASS_SRC from './shaders/liquidGlass.frag.glsl';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface LiquidGlassParams {
   blur: number;              // 0-1
@@ -23,8 +19,6 @@ export interface LiquidGlassParams {
   monoAdjust: number;
   aberration: number;        // 0-1
 }
-
-// ─── WebGL2 helpers ──────────────────────────────────────────────────────────
 
 function compileShader(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
   const shader = gl.createShader(type)!;
@@ -90,17 +84,13 @@ function drawFullscreenQuad(gl: WebGL2RenderingContext, vao: WebGLVertexArrayObj
   gl.bindVertexArray(null);
 }
 
-// ─── Renderer class ───────────────────────────────────────────────────────────
-
 // Cached uniform locations for a program — avoids gl.getUniformLocation() every frame
 interface UniformCache {
-  // blur program
   blur_uTex: WebGLUniformLocation | null;
   blur_uTexelSize: WebGLUniformLocation | null;
   blur_uRadius: WebGLUniformLocation | null;
   blur_uHorizontal: WebGLUniformLocation | null;
   blur_uSaturate: WebGLUniformLocation | null;
-  // glass program
   glass_uLayerTex: WebGLUniformLocation | null;
   glass_uBlurredBgTex: WebGLUniformLocation | null;
   glass_uOrigBgTex: WebGLUniformLocation | null;
@@ -123,7 +113,6 @@ export class LiquidGlassRenderer {
   private fboA: WebGLFramebuffer;
   private fboB: WebGLFramebuffer;
 
-  // Source textures
   private layerTex: WebGLTexture;
   private origBgTex: WebGLTexture;
 
@@ -198,9 +187,8 @@ export class LiquidGlassRenderer {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
-  // ── 2-pass Gaussian blur on bgSource → texB ─────────────────────────────────
   private blurBackground(bgSource: TexImageSource, radius: number, saturate: boolean, bgKey: string) {
-    if (bgKey && bgKey === this._lastBgKey) return;  // skip if bg unchanged
+    if (bgKey && bgKey === this._lastBgKey) return;
     this._lastBgKey = bgKey;
     const { gl } = this;
     const sz = this.size;
@@ -211,7 +199,6 @@ export class LiquidGlassRenderer {
 
     const u = this.uniforms;
 
-    // Horizontal pass: origBgTex → fboA
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboA);
     gl.viewport(0, 0, sz, sz);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -226,7 +213,6 @@ export class LiquidGlassRenderer {
     gl.uniform1i(u.blur_uSaturate, saturate ? 1 : 0);
     drawFullscreenQuad(gl, this.vao);
 
-    // Vertical pass: texA → fboB
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboB);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -251,10 +237,8 @@ export class LiquidGlassRenderer {
     const effectiveBgKey = `${bgKey}:${blurRadius.toFixed(2)}:${params.mode}`;
     this.blurBackground(bgSource, blurRadius, params.mode === 1, effectiveBgKey);
 
-    // Upload layer texture
     uploadSourceTexture(gl, this.layerTex, layerSource);
 
-    // ── Glass composite pass: render to screen ─────────────────────────────
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, sz, sz);
     gl.clearColor(0, 0, 0, 0);

@@ -13,6 +13,12 @@ const glslRaw = {
 };
 
 export default defineConfig({
+  server: {
+    port: 1009,
+  },
+  preview: {
+    port: 1009,
+  },
   plugins: [react(), glslRaw],
   resolve: {
     alias: {

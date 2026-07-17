@@ -25,7 +25,7 @@ export function Toggle({ checked, onChange, label, disabled, size = 'sm' }: Togg
         role="switch"
         aria-checked={checked}
         onClick={() => !disabled && onChange(!checked)}
-        className={`relative rounded-full transition-colors duration-200 ${checked ? 'bg-[#0a84ff]' : 'bg-[#3a3a3c]'}`}
+        className={`relative rounded-full transition-colors duration-200 ${checked ? 'bg-[#0a84ff]' : 'bg-white/[0.14]'}`}
         style={{ width: trackW, height: trackH, flexShrink: 0 }}
       >
         <span

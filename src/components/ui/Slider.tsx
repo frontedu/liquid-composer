@@ -37,7 +37,7 @@ export function Slider({
     (raw: string) => {
       const parsed = Number(raw);
       if (raw === '' || isNaN(parsed)) {
-        setInputVal(String(safeValue)); // revert
+        setInputVal(String(safeValue));
         return;
       }
       const clamped = Math.min(max, Math.max(min, Math.round(parsed / step) * step));
@@ -68,9 +68,16 @@ export function Slider({
     <div className={`flex items-center gap-2 ${disabled ? 'opacity-40' : ''}`}>
       {label && <span className="text-xs text-[#636366] w-16 shrink-0">{label}</span>}
       <div className="flex-1 relative h-4 flex items-center">
-        <div className="w-full h-1 rounded-full bg-[#3a3a3c]">
+        <div className="w-full h-1 rounded-full bg-white/[0.12]">
           <div className="h-1 rounded-full bg-[#0a84ff]" style={{ width: `${pct}%` }} />
         </div>
+        <div
+          className="absolute top-1/2 -translate-y-1/2 w-[13px] h-[13px] rounded-full bg-white pointer-events-none"
+          style={{
+            left: `calc(${pct}% - ${(pct / 100) * 13}px)`,
+            boxShadow: '0 1px 3px rgba(0,0,0,0.45), 0 0 0 0.5px rgba(0,0,0,0.12)',
+          }}
+        />
         <input
           type="range"
           min={min}
@@ -94,7 +101,7 @@ export function Slider({
         onKeyDown={(e) => {
           if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
         }}
-        className="w-10 text-xs text-right bg-[#2a2a2a] border border-[#3a3a3c] rounded px-1 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
+        className="w-10 text-xs text-right bg-white/[0.06] border border-white/[0.08] rounded px-1 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
       />
       {unit && <span className="text-xs text-[#636366] w-3">{unit}</span>}
     </div>

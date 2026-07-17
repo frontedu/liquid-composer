@@ -15,7 +15,6 @@ import { Toggle } from '../ui/Toggle';
 import type { Layer } from '../../types/index';
 import { Folder, Plus, CloudArrowDown, Trash } from '@phosphor-icons/react';
 
-// ─── Flat row model ────────────────────────────────────────────────────────────
 // We flatten the tree into a single ordered array of typed rows.
 // This avoids React.Fragment nesting and makes the DnD logic straightforward.
 
@@ -97,7 +96,6 @@ function buildRows(layers: Layer[]): Row[] {
   return rows;
 }
 
-// ─── Drop Gap ──────────────────────────────────────────────────────────────────
 function DropGap({
   isActive,
   depth,
@@ -143,7 +141,6 @@ function DropGap({
   );
 }
 
-// ─── File Upload Zone ──────────────────────────────────────────────────────────
 function FileUploadZone({ onFiles }: { onFiles: (files: File[]) => void }) {
   const [over, setOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -162,7 +159,7 @@ function FileUploadZone({ onFiles }: { onFiles: (files: File[]) => void }) {
       }}
       onClick={() => inputRef.current?.click()}
       className={`mx-2 my-1 border-2 border-dashed rounded-lg p-3 flex flex-col items-center gap-1 cursor-pointer transition-colors
-        ${over ? 'border-[#0a84ff] bg-[#0a84ff]/10' : 'border-[#3a3a3c] hover:border-[#636366]'}`}
+        ${over ? 'border-[#0a84ff] bg-[#0a84ff]/10' : 'border-white/[0.12] hover:border-white/[0.25]'}`}
     >
       <Plus size={18} weight="bold" className="text-[#636366]" />
       <span className="text-xs text-[#636366] text-center">Drop SVG/PNG or click to add</span>
@@ -182,7 +179,6 @@ function FileUploadZone({ onFiles }: { onFiles: (files: File[]) => void }) {
   );
 }
 
-// ─── Settings Dropdown ─────────────────────────────────────────────────────────
 function SettingsDropdown() {
   const persistenceEnabled = useStore($persistenceEnabled);
   const [open, setOpen] = useState(false);
@@ -202,7 +198,7 @@ function SettingsDropdown() {
       <button
         onClick={() => setOpen((v) => !v)}
         title="Save settings"
-        className={`p-1 rounded hover:bg-[#3a3a3c] transition-colors ${
+        className={`p-1 rounded hover:bg-white/[0.08] transition-colors ${
           open ? 'text-[#ebebf5]' : 'text-[#636366] hover:text-[#ebebf5]'
         }`}
       >
@@ -247,7 +243,6 @@ function SettingsDropdown() {
   );
 }
 
-// ─── Layer Tree ────────────────────────────────────────────────────────────────
 export function LayerTree() {
   const layers = useStore($layers);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -256,12 +251,10 @@ export function LayerTree() {
 
   const rows = buildRows(layers);
 
-  // True when the item being dragged is a child inside a group
   const draggingIsChild = draggingId
     ? (layers.find((l) => l.id === draggingId)?.parentId ?? null) !== null
     : false;
 
-  // ── Keyboard delete ──────────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -279,7 +272,6 @@ export function LayerTree() {
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
-  // ── File upload ──────────────────────────────────────────────────────────────
   const handleFiles = useCallback((files: File[]) => {
     files.forEach((file) => {
       const url = URL.createObjectURL(file);
@@ -287,14 +279,12 @@ export function LayerTree() {
     });
   }, []);
 
-  // ── Drag state reset ─────────────────────────────────────────────────────────
   const resetDrag = useCallback(() => {
     setDraggingId(null);
     setActiveGapKey(null);
     setGroupHoverId(null);
   }, []);
 
-  // ── Gap drop handler ─────────────────────────────────────────────────────────
   const handleGapDrop = useCallback(
     (parentId: string | null, targetId: string, position: 'before' | 'after') => {
       if (!draggingId) return;
@@ -337,30 +327,28 @@ export function LayerTree() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#2c2c2e]">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.07]">
         <span className="text-xs font-medium text-[#ebebf5]">Layers</span>
         <div className="flex items-center gap-1">
           <SettingsDropdown />
-          <div className="w-px h-3.5 bg-[#3a3a3c] mx-0.5" />
+          <div className="w-px h-3.5 bg-white/[0.10] mx-0.5" />
           <button
             onClick={addGroup}
             title="Add group"
-            className="p-1 rounded hover:bg-[#3a3a3c] text-[#636366] hover:text-[#ebebf5] transition-colors"
+            className="p-1 rounded hover:bg-white/[0.08] text-[#636366] hover:text-[#ebebf5] transition-colors"
           >
             <Folder size={14} weight="bold" />
           </button>
           <button
             onClick={() => addLayer()}
             title="Add layer"
-            className="p-1 rounded hover:bg-[#3a3a3c] text-[#636366] hover:text-[#ebebf5] transition-colors"
+            className="p-1 rounded hover:bg-white/[0.08] text-[#636366] hover:text-[#ebebf5] transition-colors"
           >
             <Plus size={14} weight="bold" />
           </button>
         </div>
       </div>
 
-      {/* Scrollable list */}
       <div
         className="flex-1 overflow-y-auto flex flex-col"
         onDragEnd={resetDrag}
@@ -372,7 +360,6 @@ export function LayerTree() {
             <FileUploadZone onFiles={handleFiles} />
 
             {rows.map((row) => {
-              // ── Gap row ─────────────────────────────────────────────────────
               if (row.kind === 'gap') {
                 const isActive = activeGapKey === row.key;
                 return (
@@ -417,7 +404,6 @@ export function LayerTree() {
                 );
               }
 
-              // ── Layer / Group item ───────────────────────────────────────────
               const { layer, depth } = row;
               // The expanded group header is an eject target when we're dragging
               // one of its own children over it

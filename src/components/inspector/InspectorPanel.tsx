@@ -3,7 +3,7 @@ import { useStore } from '@nanostores/react';
 import { $selectedLayerId } from '../../store/uiStore';
 import { $layers, updateLayer } from '../../store/iconStore';
 import { ColorSection } from './ColorSection';
-import { LiquidGlassSection } from './LiquidGlassSection'; // layers only
+import { LiquidGlassSection } from './LiquidGlassSection';
 import { CompositionSection } from './CompositionSection';
 import { Slider } from '../ui/Slider';
 import { Select } from '../ui/Select';
@@ -24,7 +24,6 @@ const BLEND_MODES: { value: BlendMode; label: string }[] = [
   { value: 'exclusion', label: 'Exclusion' },
 ];
 
-/** Opacity + Blend mode section — shown for groups (no fill controls) */
 function GroupColorSection() {
   const selectedId = useStore($selectedLayerId);
   const layers = useStore($layers);
@@ -34,11 +33,10 @@ function GroupColorSection() {
   const childCount = layers.filter((l) => l.parentId === layer.id).length;
 
   return (
-    <div className="border-b border-[#2c2c2e] pb-5">
+    <div className="border-b border-white/[0.07] pb-5">
       <div className="flex items-center justify-between px-3 py-3">
         <span className="text-xs font-semibold text-[#ebebf5]">Group</span>
-        {/* Child count badge */}
-        <span className="text-2xs text-[#636366] bg-[#2a2a2a] px-1.5 py-0.5 rounded">
+        <span className="text-2xs text-[#636366] bg-white/[0.07] px-1.5 py-0.5 rounded">
           {childCount} {childCount === 1 ? 'layer' : 'layers'}
         </span>
       </div>
@@ -72,8 +70,8 @@ export function InspectorPanel() {
   const layer = layers.find((l) => l.id === selectedId);
 
   return (
-    <div className="w-[220px] bg-[#1c1c1e] border-l border-[#2c2c2e] flex flex-col overflow-y-auto">
-      <div className="flex items-center border-b border-[#2c2c2e] px-3 h-9 shrink-0">
+    <div className="w-[220px] bg-[#131316] border-l border-white/[0.07] flex flex-col overflow-y-auto">
+      <div className="flex items-center border-b border-white/[0.07] px-3 h-9 shrink-0">
         <span className="text-xs font-medium text-[#ebebf5]">
           {layer ? layer.name : 'Inspector'}
         </span>

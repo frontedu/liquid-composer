@@ -33,7 +33,6 @@ function useDragDrop() {
   return { over, handleDragOver, handleDragLeave, handleDrop };
 }
 
-// Shadow drawn behind the icon squircle
 function IconShadow({ size, mode }: { size: number; mode: string }) {
   return (
     <div
@@ -64,7 +63,6 @@ function IconShadow({ size, mode }: { size: number; mode: string }) {
   );
 }
 
-// Apple-style safe area overlay with guides
 function SafeAreaOverlay({ size }: { size: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -184,7 +182,6 @@ export function IconCanvas() {
   const [snapGuide, setSnapGuide] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
   const { over, handleDragOver, handleDragLeave, handleDrop } = useDragDrop();
 
-  // On-canvas drag state
   const dragState = useRef<{
     layerId: string;
     startX: number;
@@ -347,16 +344,13 @@ export function IconCanvas() {
       };
       target.setPointerCapture(e.pointerId);
     } else {
-      // Clicked empty space — clear selection
       selectLayer(null);
     }
   }, [layers, iconSize, hitTestLayer, selectedLayerId]);
 
-  // Throttled canvas hover detection
   const hoverRafRef = useRef(0);
   const iconAreaRef = useRef<HTMLDivElement>(null);
   const handleCanvasPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    // Canvas hover: when not dragging, hit-test layers and update hoveredLayerId
     if (!dragState.current) {
       if (hoverRafRef.current) return; // already pending
       // Capture coordinates synchronously before React recycles the event
@@ -423,9 +417,6 @@ export function IconCanvas() {
   }, []);
 
   const bgStyle = (() => {
-    if (mode === 'dark') {
-      return { background: '#0a0a0f' };
-    }
     if (mode === 'clear') {
       // Dark checkered pattern (same as layer thumbnails) signals transparency
       return {
@@ -440,19 +431,7 @@ export function IconCanvas() {
         backgroundPosition: '0 0,0 9px,9px -9px,-9px 0px',
       };
     }
-    if (background.bgType === 'custom') {
-      return { background: '#2a2a2e' };
-    }
-    if (background.type === 'gradient' && background.colors) {
-      const toAlpha = (c: string) =>
-        c.startsWith('hsl(')
-          ? c.replace('hsl(', 'hsla(').replace(')', ', 0.2)')
-          : `${c}33`;
-      return {
-        background: `linear-gradient(${background.angle ?? 90}deg, ${toAlpha(background.colors[0])}, ${toAlpha(background.colors[1])})`,
-      };
-    }
-    return { background: '#2a2a2e' };
+    return { background: '#0a0a0f' };
   })();
 
   return (
@@ -484,7 +463,6 @@ export function IconCanvas() {
         </div>
       )}
 
-      {/* Snap guides */}
       {snapGuide.x && (
         <div className="absolute pointer-events-none z-30" style={{ left: '50%', top: 0, width: 1, height: '100%', background: 'rgba(255,59,48,0.7)', transform: 'translateX(-0.5px)' }} />
       )}
@@ -574,7 +552,6 @@ export function IconCanvas() {
 
       <BottomBar />
 
-      {/* Toolbar strip at bottom */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/30 backdrop-blur-sm rounded-full px-3 py-1">
         <button
           onClick={() => setShowSafeArea((s) => !s)}

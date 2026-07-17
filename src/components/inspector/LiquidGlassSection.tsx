@@ -19,13 +19,13 @@ export function LiquidGlassSection() {
       : updateLayerLiquidGlass(layer.id, partial);
 
   return (
-    <div className="border-b border-[#2c2c2e] pb-5">
+    <div className="border-b border-white/[0.07] pb-5">
       <div className="flex items-center justify-between px-3 py-3">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-[#ebebf5]">Liquid Glass</span>
           <Toggle checked={lg.enabled} onChange={(v) => update({ enabled: v })} size="sm" />
         </div>
-        <span className="text-2xs text-[#636366] bg-[#2a2a2a] px-1.5 py-0.5 rounded">
+        <span className="text-2xs text-[#636366] bg-white/[0.07] px-1.5 py-0.5 rounded">
           {lg.mode === 'all' ? 'All' : 'Individual'}
         </span>
       </div>
@@ -34,7 +34,7 @@ export function LiquidGlassSection() {
         <div className="px-3 space-y-4">
           <div className="flex items-center gap-2">
             <span className="text-xs text-[#636366] w-16 shrink-0">Mode</span>
-            <div className="flex items-center bg-[#2a2a2a] rounded border border-[#3a3a3c] overflow-hidden">
+            <div className="flex items-center bg-white/[0.06] rounded border border-white/[0.08] overflow-hidden">
               {(['individual', 'all'] as const).map((m) => (
                 <button
                   key={m}

@@ -206,9 +206,6 @@ export async function deleteLayerAsset(id: string) {
     saveState();
 }
 
-/**
- * Clears all saved state and reloads the app.
- */
 export async function clearPersistence() {
     $hasUnsavedChanges.set(false);
     $persistenceEnabled.set(false);

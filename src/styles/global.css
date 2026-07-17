@@ -18,15 +18,15 @@
 html, body {
   height: 100%;
   overflow: hidden;
-  background: #1e1e1e;
+  background: #0a0a0f;
   color: #ebebf5;
 }
 
 /* Thin macOS-style scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #3a3a3c; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #636366; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.30); }
 
 /* Reset browser-native range appearance before styling the thumb */
 input[type='range'] { -webkit-appearance: none; appearance: none; }
@@ -52,7 +52,7 @@ input[type='color']::-webkit-color-swatch { border: 1px solid rgba(255, 255, 255
 .text-2xs { font-size: 10px; line-height: 1.2; }
 
 .glass-panel {
-  background: rgba(40, 40, 42, 0.85);
+  background: rgba(28, 28, 30, 0.88);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.08);

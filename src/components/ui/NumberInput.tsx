@@ -75,7 +75,7 @@ export function NumberInput({
           {label}
         </span>
       )}
-      <div className="flex items-center bg-[#2a2a2a] border border-[#3a3a3c] rounded-md overflow-hidden">
+      <div className="flex items-center bg-white/[0.06] border border-white/[0.08] rounded-md overflow-hidden">
         <input
           type="number"
           value={value}

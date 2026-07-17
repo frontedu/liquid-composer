@@ -71,13 +71,8 @@ const LAYER_DIR_SHADOW_MAX_LIGHT  = 0.18;  // max darkness in light mode
 const LAYER_DIR_SHADOW_MID_DARK   = 0.78;  // midpoint darkness in dark mode
 const LAYER_DIR_SHADOW_MAX_DARK   = 0.15;  // max darkness in dark mode
 
-// =============================================================================
-
-// ─── Image cache ──────────────────────────────────────────────────────────────
-
 const imageCache = new Map<string, HTMLImageElement>();
 
-// ─── Hi-res image cache ───────────────────────────────────────────────────────
 // SVGs with explicit small intrinsic dims (e.g. 24×24) are rasterized by Chrome
 // at that size and upscaled. Loading the same URL into a new Image with explicit
 // large width/height forces Chrome to rasterize the SVG at that size instead.
@@ -93,12 +88,10 @@ function preloadHiRes(url: string): void {
   hi.src = url;
 }
 
-// ─── Background canvas cache ──────────────────────────────────────────────────
 // Avoids re-creating the background canvas every render when bg config hasn't changed.
 
 const bgCanvasCache = new Map<string, { canvas: HTMLCanvasElement; key: string }>();
 
-// ─── Drop-shadow canvas cache ─────────────────────────────────────────────────
 // Caches blurred shadow canvases per layer so we don't re-run filter:blur()
 // on every frame when nothing about the shadow has changed.
 const shadowCache = new Map<string, { canvas: HTMLCanvasElement; key: string }>();
@@ -154,7 +147,6 @@ const _colorSampleCanvas = (() => {
   return c;
 })();
 
-// ─── Layer tint color cache ───────────────────────────────────────────────────
 // The dominant tinted color of a layer only changes when blobUrl or fill changes,
 // not when the layer moves. Cache it to avoid getImageData on every frame.
 const layerTintCache = new Map<string, { r: number; g: number; b: number }>();
@@ -187,8 +179,6 @@ async function getCachedImage(url: string): Promise<HTMLImageElement> {
     img.src = url;
   });
 }
-
-// ─── WebGL singleton ──────────────────────────────────────────────────────────
 
 let _glCanvas: HTMLCanvasElement | null = null;
 let _glRenderer: LiquidGlassRenderer | null = null;
@@ -281,8 +271,6 @@ function getWebGLRenderer(size: number): LiquidGlassRenderer | null {
   }
 }
 
-// ─── Utility ──────────────────────────────────────────────────────────────────
-
 type ScratchRef = { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D };
 
 const scratchPool = new Map<string, ScratchRef>();
@@ -365,7 +353,6 @@ function normalizeHexColor(hex: string): string | null {
 }
 
 /**
- * Returns the relative luminance (0–1) of a hex color.
  * Used to decide whether a fill color already contrasts on a dark background.
  */
 function relativeLuminance(hex: string): number {
@@ -465,8 +452,6 @@ function parseHslString(hsl: string): { r: number; g: number; b: number } | null
   return hslToRgb(parseFloat(m[1]), parseFloat(m[2]), 12); // use source hue/sat, force dark L
 }
 
-// ─── Canvas 2D Liquid Glass helper passes ─────────────────────────────────────
-
 /**
  * Drop shadow derived from the background color.
  * Single-pass: blurred silhouette tinted with a dark version of the bg hue.
@@ -484,9 +469,7 @@ function drawDropShadow(
   if (!shadow.enabled || shadow.value <= 0) return;
 
   const sv = shadow.value / 100;
-  
-  // --- 1. Draw the Original Blurred Drop Shadow ---
-  // The drop shadow spreads out softly underneath everything.
+
   const blurPx = sv * size * 0.05;
   const offsetY = sv * size * 0.022;
   const shadowAlpha = sv * 0.35;
@@ -625,7 +608,6 @@ function drawLayerBevel(
       return rimCv;
     };
 
-    // Outer shape rim
     const rimCv = buildRimCanvas(contentCanvas, 'layer-rim', 'layer-rim-mask');
     outCtx.save();
     outCtx.globalCompositeOperation = 'screen';
@@ -841,13 +823,11 @@ async function renderLayerCanvas2D(
       bb.putImageData(outData, 0, 0);
     }
 
-    // Clip to content alpha
     const { canvas: clipped, ctx: cc } = scratch.getCanvas('layer-clip', size);
     cc.drawImage(blurredBg, 0, 0);
     cc.globalCompositeOperation = 'destination-in';
     cc.drawImage(contentCanvas, 0, 0);
 
-    // Tint overlay (clipped)
     cc.globalCompositeOperation = 'source-over';
     const tintAlpha = dark ? 0.18 : 0.10;
     const tintColor = dark ? `rgba(10,10,22,${tintAlpha})` : `rgba(255,255,255,${tintAlpha})`;
@@ -882,7 +862,6 @@ async function renderLayerCanvas2D(
 
     const { canvas: specCanvas, ctx: sc } = scratch.getCanvas('layer-spec', size);
 
-    // Tight radial glow that stays close to the rim
     const specGrad = sc.createRadialGradient(hx, hy, 0, hx, hy, size * LAYER_SPECULAR_RADIUS);
     for (let i = 0; i <= 14; i++) {
       const t = i / 14;
@@ -891,7 +870,6 @@ async function renderLayerCanvas2D(
     sc.fillStyle = specGrad;
     sc.fillRect(0, 0, size, size);
 
-    // Clip to content shape
     sc.globalCompositeOperation = 'destination-in';
     sc.drawImage(contentCanvas, 0, 0);
 
@@ -945,7 +923,6 @@ async function renderLayerCanvas2D(
     ic.globalCompositeOperation = 'destination-out';
     ic.drawImage(contentCanvas, 0, -insetOff);
 
-    // Color: soft white
     ic.globalCompositeOperation = 'source-in';
     ic.fillStyle = `rgba(255,255,255,${LAYER_INSET_ALPHA})`;
     ic.fillRect(0, 0, size, size);
@@ -963,7 +940,6 @@ async function renderLayerCanvas2D(
     const erodeGlow = Math.max(3, size * LAYER_INNER_GLOW_WIDTH);
     const { canvas: glowCanvas, ctx: gc } = scratch.getCanvas('layer-glow', size);
 
-    // Start with content shape
     gc.drawImage(contentCanvas, 0, 0);
 
     // Erode inward to create the inner glow ring
@@ -973,7 +949,6 @@ async function renderLayerCanvas2D(
     gc.globalCompositeOperation = 'destination-out';
     gc.drawImage(innerMask, 0, 0);
 
-    // Color: warm radial glow from lit corner
     gc.globalCompositeOperation = 'source-in';
     const glowX = size * (0.5 + lx * 0.4);
     const glowY = size * (0.5 + ly * 0.4);
@@ -1007,7 +982,6 @@ async function renderLayerCanvas2D(
     dc.fillStyle = dimGrad;
     dc.fillRect(0, 0, size, size);
 
-    // Clip to content shape
     dc.globalCompositeOperation = 'destination-in';
     dc.drawImage(contentCanvas, 0, 0);
 
@@ -1025,7 +999,6 @@ async function renderLayerCanvas2D(
   {
     const { canvas: innerCanvas, ctx: ic } = scratch.getCanvas('layer-inner', size);
 
-    // Create a directional gradient that darkens the far side of the light
     const shadowX = size * (0.5 - lx * 0.5);
     const shadowY = size * (0.5 - ly * 0.5);
     const innerGrad = ic.createLinearGradient(
@@ -1047,8 +1020,6 @@ async function renderLayerCanvas2D(
     outCtx.restore();
   }
 }
-
-// ─── Build content canvas (fill + SVG) ───────────────────────────────────────
 
 async function buildContentCanvas(
   layer: Layer,
@@ -1072,7 +1043,6 @@ async function buildContentCanvas(
   ctx.translate(-size / 2, -size / 2);
 
   if (layer.blobUrl) {
-    // Image-based layer
     try {
       const img = await getCachedImage(layer.blobUrl);
       const iw = img.naturalWidth;
@@ -1162,8 +1132,6 @@ async function buildContentCanvas(
   return softCanvas;
 }
 
-// ─── Render a single layer ────────────────────────────────────────────────────
-
 async function renderLayerToCanvas(
   layer: Layer,
   size: number,
@@ -1182,13 +1150,11 @@ async function renderLayerToCanvas(
     ? layer.liquidGlass
     : { ...layer.liquidGlass, specular: false };
 
-  // ── Output canvas ─────────────────────────────────────────────────────────
   const out = document.createElement('canvas');
   out.width = out.height = size;
   const outCtx = out.getContext('2d')!;
 
   if (!liquidGlass.enabled) {
-    // Plain pass-through
     outCtx.save();
     outCtx.globalAlpha = layer.opacity / 100;
     outCtx.globalCompositeOperation = blendModeToCanvas(layer.blendMode);
@@ -1197,7 +1163,6 @@ async function renderLayerToCanvas(
     return out;
   }
 
-  // ── Try WebGL path ────────────────────────────────────────────────────────
   const renderer = getWebGLRenderer(size);
   if (renderer && _glCanvas) {
     try {
@@ -1246,7 +1211,6 @@ async function renderLayerToCanvas(
     }
   }
 
-  // ── Canvas 2D fallback ────────────────────────────────────────────────────
   await renderLayerCanvas2D(
     outCtx, contentCanvas, size, mode, lightAngle, bgCanvas,
     liquidGlass, layer.opacity, layer.blendMode, background, layer, scratch,
@@ -1254,9 +1218,6 @@ async function renderLayerToCanvas(
 
   return out;
 }
-
-
-// ─── Main compositor ──────────────────────────────────────────────────────────
 
 export async function renderIconToCanvas(
   outputCanvas: HTMLCanvasElement,
@@ -1303,7 +1264,6 @@ export async function renderIconToCanvas(
     c.restore();
   }
 
-  // ── Squircle-clipped icon content ─────────────────────────────────────────
   c.save();
   drawSquirclePath(c, 0, 0, size);
   c.clip();
@@ -1355,7 +1315,6 @@ export async function renderIconToCanvas(
         );
         if (lc) {
           gc.drawImage(lc, 0, 0);
-          // Update running bg with this child's output
           rbCtx.drawImage(lc, 0, 0);
         }
       }
@@ -1377,7 +1336,6 @@ export async function renderIconToCanvas(
       );
       if (lc) {
         c.drawImage(lc, 0, 0);
-        // Update running bg with this layer's output for subsequent layers
         rbCtx.drawImage(lc, 0, 0);
       }
     }
@@ -1385,7 +1343,6 @@ export async function renderIconToCanvas(
 
   c.restore(); // end squircle clip
 
-  // ── Squircle glass rim ────────────────────────────────────────────────────
   //
   //  Visual map (what you SEE on the icon, not code internals):
   //
@@ -1547,8 +1504,6 @@ export async function renderIconToCanvas(
   const outCtx = outputCanvas.getContext('2d');
   if (outCtx) outCtx.drawImage(masterCanvas, 0, 0);
 }
-
-// ─── Export ───────────────────────────────────────────────────────────────────
 
 export async function exportIconPNG(
   layers: RenderContext['layers'],

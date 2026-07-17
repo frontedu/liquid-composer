@@ -64,9 +64,8 @@ export function LayerItem({
           ? 'bg-[#0a84ff]/40 text-white'
           : isInsideTarget
           ? 'bg-[#0a84ff]/15 outline outline-1 outline-[#0a84ff]/50 text-[#ebebf5]'
-          : 'text-[#ebebf5] hover:bg-[#2c2c2e]'}`}
+          : 'text-[#ebebf5] hover:bg-white/[0.06]'}`}
     >
-      {/* Collapse toggle (groups only) */}
       {isGroup ? (
         <button
           onClick={(e) => { e.stopPropagation(); toggleGroupCollapsed(layer.id); }}
@@ -79,7 +78,6 @@ export function LayerItem({
         <div className="w-4 h-4 flex-shrink-0" />
       )}
 
-      {/* Thumbnail */}
       <div
         className="w-9 h-9 rounded-[5px] flex-shrink-0 overflow-hidden flex items-center justify-center p-1"
         style={{
@@ -94,7 +92,7 @@ export function LayerItem({
         }}
       >
         {isGroup ? (
-          <div className="w-full h-full rounded-[3px] flex items-center justify-center bg-[#2c2c2e]">
+          <div className="w-full h-full rounded-[3px] flex items-center justify-center bg-white/[0.07]">
             <Folder size={14} weight="bold" className="text-[#636366]" />
           </div>
         ) : layer.blobUrl ? (
@@ -104,7 +102,6 @@ export function LayerItem({
         )}
       </div>
 
-      {/* Name (editable on double-click) */}
       {editing ? (
         <input
           ref={inputRef}
@@ -130,7 +127,6 @@ export function LayerItem({
         </span>
       )}
 
-      {/* Actions (visible on hover / selected) */}
       <div className={`flex items-center gap-0.5 transition-opacity ${isSelected ? 'opacity-80' : 'opacity-0 group-hover:opacity-100'}`}>
         <button
           onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}

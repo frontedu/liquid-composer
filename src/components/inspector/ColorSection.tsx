@@ -6,7 +6,6 @@ import { Slider } from '../ui/Slider';
 import { Select } from '../ui/Select';
 import type { BlendMode, FillConfig } from '../../types/index';
 
-// Custom debounce hook for performance
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
   useEffect(() => {
@@ -66,7 +65,6 @@ export function ColorSection() {
     }
   }, [layer?.id, layer?.fill.type]);
 
-  // Sync debounced solid color to store (skip on initialization)
   useEffect(() => {
     if (!layer) return;
     if (skipSolidSync.current) { skipSolidSync.current = false; return; }
@@ -75,7 +73,6 @@ export function ColorSection() {
     }
   }, [debouncedSolidColor]);
 
-  // Sync debounced gradient stops to store (skip on initialization)
   useEffect(() => {
     if (!layer || layer.fill.type !== 'gradient' || !('stops' in layer.fill)) return;
     if (skipStopsSync.current) { skipStopsSync.current = false; return; }
@@ -89,10 +86,10 @@ export function ColorSection() {
   const fill = layer.fill;
 
   return (
-    <div className="border-b border-[#2c2c2e] pb-5">
+    <div className="border-b border-white/[0.07] pb-5">
       <div className="flex items-center justify-between px-3 py-3">
         <span className="text-xs font-semibold text-[#ebebf5]">Color</span>
-        <span className="text-2xs text-[#636366] bg-[#2a2a2a] px-1.5 py-0.5 rounded">All</span>
+        <span className="text-2xs text-[#636366] bg-white/[0.07] px-1.5 py-0.5 rounded">All</span>
       </div>
 
       <div className="px-3 space-y-3">
@@ -154,7 +151,7 @@ export function ColorSection() {
                   type="text"
                   value={localSolidColor}
                   onChange={(e) => setLocalSolidColor(e.target.value)}
-                  className="min-w-0 flex-1 text-xs bg-[#2a2a2a] border border-[#3a3a3c] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
+                  className="min-w-0 flex-1 text-xs bg-white/[0.06] border border-white/[0.08] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
                 />
               </div>
             </div>
@@ -162,12 +159,10 @@ export function ColorSection() {
 
           {fill.type === 'gradient' && 'stops' in fill && (
             <div className="space-y-1.5">
-              {/* Gradient preview */}
               <div
                 className="w-full h-4 rounded-md"
                 style={{ background: `linear-gradient(90deg, ${(localStops[0]?.color ?? '#fff')}, ${(localStops[1]?.color ?? '#000')})` }}
               />
-              {/* Fixed 2 color stops */}
               {[0, 1].map((i) => {
                 const stop = localStops[i] ?? { offset: i, color: i === 0 ? '#ffffff' : '#000000' };
                 return (
@@ -190,7 +185,7 @@ export function ColorSection() {
                         newStops[i] = { ...newStops[i], color: e.target.value };
                         setLocalStops(newStops);
                       }}
-                      className="flex-1 min-w-0 text-xs bg-[#2a2a2a] border border-[#3a3a3c] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
+                      className="flex-1 min-w-0 text-xs bg-white/[0.06] border border-white/[0.08] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
                     />
                   </div>
                 );

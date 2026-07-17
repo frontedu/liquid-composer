@@ -16,7 +16,6 @@ const float GL_AMBIENT_SAT    = 2.65; // saturation boost of the bg color sample
 // [F] VOLUMETRIC DEPTH
 const float GL_AO_DARKEN      = 0.58; // ambient occlusion darkening (lower = darker)
 const float GL_FROSTINESS     = 0.35; // how much blur makes glass milky/opaque
-// =============================================================================
 
 in vec2 vUV;
 in vec2 vScreenUV;
@@ -46,8 +45,6 @@ vec3 acesToneMap(vec3 x) {
   return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
 float sampleAlpha(vec2 uv) {
   return texture(uLayerTex, uv).a;
 }
@@ -71,7 +68,6 @@ float edgeMagnitude(float alpha) {
   return smoothstep(0.0, px * 1.25, w);
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────────
 void main() {
   float alpha = sampleAlpha(vUV);
   if (alpha < 0.01) { fragColor = vec4(0.0); return; }
@@ -80,7 +76,6 @@ void main() {
   const float uThickness = 0.65;
   const float uStrength  = 0.72;
 
-  // Surface gradient and edge strength
   vec2  grad     = alphaGradient(vUV);
   float gradLen  = length(grad);
   vec2  normal   = gradLen > 0.001 ? grad / gradLen : vec2(0.0);
@@ -93,7 +88,6 @@ void main() {
   float cornerProx  = min(vUV.x, 1.0 - vUV.x) * min(vUV.y, 1.0 - vUV.y);
   float cornerBoost = exp(-cornerProx * 40.0) * 0.5;
 
-  // Edge / Rim / Base intensity zones
   float edgeZone = edge;
   float rimZone  = smoothstep(0.08, 0.80, normalLen);
   float baseZone = 1.0 - normalLen;
