@@ -1,9 +1,10 @@
+import { zipSync } from 'fflate';
 import type { RenderContext, Layer, BackgroundConfig, AppearanceMode, LayerEffects } from '../types/index';
 import type { LiquidGlassConfig } from '../types/index';
 import { drawSquirclePath, createBackgroundCanvas } from './ImageProcessor';
 import { LiquidGlassRenderer } from './LiquidGlass';
 import type { LiquidGlassParams } from './LiquidGlass';
-import { setWebgl2Status, setWebgl2Error } from '../store/uiStore';
+import { $webgl2Restores, setWebgl2Status, setWebgl2Error } from '../store/uiStore';
 
 const NEUTRAL_SHADOW_BG: BackgroundConfig = { type: 'solid', color: '#1c1c1e' };
 
@@ -41,6 +42,11 @@ const LAYER_INNER_RIM_ALPHA_BLUR  = 0.80;  // opacity of the blurred pass
 const LAYER_INNER_RIM_ALPHA_SHARP = 0.45;  // opacity of the sharp pass layered on top
 const LAYER_HOLES_RIM_ALPHA_BLUR  = 0.80;
 const LAYER_HOLES_RIM_ALPHA_SHARP = 0.45;
+
+// [2b] RIM TINT — background sampled under the layer, mixed into rim and outer border
+const LAYER_RIM_BG_SAT  = 2.0;   // saturation boost of the sampled background
+const LAYER_RIM_BG_LIFT = 0.35;  // lift toward white
+const LAYER_RIM_BG_MIX  = 0.65;  // share of background tint over layer color
 
 // [4] INNER SHADOW — darkens the inner edge on the shadow side (concave depth)
 const LAYER_INNER_SHADOW_MID_ALPHA   = 0.12;  // midpoint
@@ -202,6 +208,7 @@ function getWebGLRenderer(size: number): LiquidGlassRenderer | null {
         _glRenderer = null;
         _glSize = 0;
       });
+      _glCanvas.addEventListener('webglcontextrestored', () => $webgl2Restores.set($webgl2Restores.get() + 1));
     }
     if (size !== _glSize) {
       _glRenderer?.dispose();
@@ -257,7 +264,7 @@ function blendModeToCanvas(mode: string): GlobalCompositeOperation {
 
 function mapTranslucency(value: number, enabled: boolean): number {
   if (!enabled) return 0;
-  return Math.pow(Math.max(0, Math.min(1, value / 100)), 1.35);
+  return Math.max(0, Math.min(1, value / 100));
 }
 
 function relativeLuminance(hex: string): number {
@@ -370,6 +377,7 @@ function drawDropShadow(
 function drawLayerBevel(
   outCtx: CanvasRenderingContext2D,
   contentCanvas: HTMLCanvasElement,
+  bgCanvas: HTMLCanvasElement,
   size: number,
   lightAngle: number,
   tintCacheKey: string | null,
@@ -418,7 +426,30 @@ function drawLayerBevel(
     }
     return color;
   })();
-  const lc = (a: number) => `rgba(${layerColor.r},${layerColor.g},${layerColor.b},${a})`;
+  const rimColor = (() => {
+    const s = 16;
+    const tc = _colorSampleCtx;
+    tc.clearRect(0, 0, s, s);
+    tc.drawImage(contentCanvas, 0, 0, s, s);
+    tc.globalCompositeOperation = 'source-in';
+    tc.drawImage(bgCanvas, 0, 0, s, s);
+    tc.globalCompositeOperation = 'source-over';
+    const data = tc.getImageData(0, 0, s, s).data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] > 60) { r += data[i]; g += data[i + 1]; b += data[i + 2]; n++; }
+    }
+    if (n === 0) return layerColor;
+    r /= n; g /= n; b /= n;
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    const tint = (c: number, base: number) => {
+      const sat  = Math.max(0, Math.min(255, gray + (c - gray) * LAYER_RIM_BG_SAT));
+      const lift = sat + (255 - sat) * LAYER_RIM_BG_LIFT;
+      return Math.round(base + (lift - base) * LAYER_RIM_BG_MIX);
+    };
+    return { r: tint(r, layerColor.r), g: tint(g, layerColor.g), b: tint(b, layerColor.b) };
+  })();
+  const lc = (a: number) => `rgba(${rimColor.r},${rimColor.g},${rimColor.b},${a})`;
 
   // ── [1] Inner specular dome ───────────────────────────────────────────────
   if (liquidGlass.specular) {
@@ -565,7 +596,8 @@ function drawLayerBevel(
     oc.globalCompositeOperation = 'destination-out';
     oc.drawImage(contentCanvas, 0, 0);
     oc.globalCompositeOperation = 'source-in';
-    fit(oc, contentCanvas, -dilate);
+    oc.fillStyle = lc(1);
+    oc.fillRect(0, 0, size, size);
     outCtx.save();
     outCtx.globalCompositeOperation = 'source-over';
     outCtx.globalAlpha = (fx.outerBorderAlpha / 100);
@@ -711,7 +743,7 @@ async function renderLayerToCanvas(
   const drawWithoutRefraction = () => {
     drawDropShadow(outCtx, contentCanvas, size, liquidGlass.shadow, shadowBg, layer, scratch);
     drawContentFlat(outCtx, contentCanvas);
-    drawLayerBevel(outCtx, contentCanvas, size, lightAngle, tintKey, liquidGlass, scratch, rect);
+    drawLayerBevel(outCtx, contentCanvas, bgCanvas, size, lightAngle, tintKey, liquidGlass, scratch, rect);
     return out;
   };
 
@@ -719,7 +751,7 @@ async function renderLayerToCanvas(
 
   const fx = { ...DEFAULT_EFFECTS, ...liquidGlass.effects };
   const params: LiquidGlassParams = {
-    blur: liquidGlass.blur.enabled ? liquidGlass.blur.value / 100 : 0.35,
+    blur: liquidGlass.blur.enabled ? liquidGlass.blur.value / 100 : 0,
     translucency: mapTranslucency(liquidGlass.translucency.value, liquidGlass.translucency.enabled),
     specular: liquidGlass.specular,
     specularIntensity: (liquidGlass.specularIntensity ?? 100) / 100,
@@ -752,7 +784,7 @@ async function renderLayerToCanvas(
 
   outCtx.drawImage(renderer.canvas, 0, 0);
 
-  drawLayerBevel(outCtx, contentCanvas, size, lightAngle, tintKey, liquidGlass, scratch, rect);
+  drawLayerBevel(outCtx, contentCanvas, bgCanvas, size, lightAngle, tintKey, liquidGlass, scratch, rect);
 
   return out;
 }
@@ -862,7 +894,7 @@ async function renderIconToCanvasImpl(
         }
       }
 
-      composite(c, groupCanvas, layer.opacity / 100, 'normal');
+      composite(c, groupCanvas, layer.opacity / 100, layer.blendMode);
     } else {
       const lc = await renderLayerToCanvas(
         layer,
@@ -1020,8 +1052,8 @@ async function renderIconToCanvasImpl(
   if (outCtx) outCtx.drawImage(masterCanvas, 0, 0);
 }
 
-export type ExportFormat = 'png' | 'jpeg' | 'webp';
-export interface ExportOptions { format: ExportFormat; size: number }
+export type ExportFormat = 'png' | 'jpeg';
+export interface ExportOptions { format: ExportFormat; size: number; allModes?: boolean; clipboard?: boolean }
 
 const EXPORT_QUALITY = 0.95;
 
@@ -1040,6 +1072,32 @@ function downscale(source: HTMLCanvasElement, target: number): HTMLCanvasElement
   return current;
 }
 
+async function renderForExport(
+  layers: RenderContext['layers'],
+  background: RenderContext['background'],
+  lightAngle: number,
+  mode: AppearanceMode,
+  renderSize: number,
+): Promise<HTMLCanvasElement> {
+  const rendered = document.createElement('canvas');
+  await renderIconToCanvas(rendered, { layers, background, lightAngle, appearanceMode: mode, size: renderSize });
+  return rendered;
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, format: ExportFormat): Promise<Blob> {
+  if (format === 'jpeg') {
+    const ctx = canvas.getContext('2d')!;
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  return new Promise((resolve, reject) => canvas.toBlob(
+    (blob) => (blob ? resolve(blob) : reject(new Error(`Export failed for image/${format}`))),
+    `image/${format}`,
+    EXPORT_QUALITY,
+  ));
+}
+
 export async function exportIcon(
   layers: RenderContext['layers'],
   background: RenderContext['background'],
@@ -1048,16 +1106,26 @@ export async function exportIcon(
   { format, size }: ExportOptions = { format: 'png', size: 1024 },
 ): Promise<Blob> {
   const renderSize = Math.max(size, Math.min(2048, Math.max(1024, size * 2)));
-  const rendered = document.createElement('canvas');
-  await renderIconToCanvas(rendered, { layers, background, lightAngle, appearanceMode: mode, size: renderSize });
-  const canvas = downscale(rendered, size);
-  if (format === 'jpeg') {
-    const ctx = canvas.getContext('2d')!;
-    ctx.globalCompositeOperation = 'destination-over';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, size, size);
+  const rendered = await renderForExport(layers, background, lightAngle, mode, renderSize);
+  return canvasToBlob(downscale(rendered, size), format);
+}
+
+const APPEARANCE_MODES: AppearanceMode[] = ['default', 'dark', 'clear'];
+const ZIP_SIZES = [4096, 2048, 1024, 512, 256];
+
+export async function exportZip(
+  layers: RenderContext['layers'],
+  background: RenderContext['background'],
+  lightAngle: number,
+): Promise<Blob> {
+  const files: Record<string, Uint8Array> = {};
+  for (const mode of APPEARANCE_MODES) {
+    const full = await renderForExport(layers, background, lightAngle, mode, 4096);
+    const base = await renderForExport(layers, background, lightAngle, mode, 2048);
+    for (const size of ZIP_SIZES) {
+      const blob = await canvasToBlob(downscale(size > 2048 ? full : base, size), 'png');
+      files[`${mode}/icon-${size}.png`] = new Uint8Array(await blob.arrayBuffer());
+    }
   }
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, `image/${format}`, EXPORT_QUALITY));
-  if (!blob) throw new Error(`Export failed for image/${format}`);
-  return blob;
+  return new Blob([zipSync(files, { level: 0 }) as Uint8Array<ArrayBuffer>], { type: 'application/zip' });
 }

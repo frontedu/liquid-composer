@@ -108,7 +108,7 @@ void main() {
 
   int mode = int(uParams2.w + 0.5);
   vec4 frostTint = (mode == 1) ? vec4(0.08, 0.08, 0.12, 1.0) : vec4(1.0);
-  vec4 bgSharp   = textureLod(uOrigBgTex, uvG, 0.0);
+  vec4 bgSharp   = vec4(textureLod(uOrigBgTex, uvR, 0.0).r, textureLod(uOrigBgTex, uvG, 0.0).g, textureLod(uOrigBgTex, uvB, 0.0).b, 1.0);
   bgSharp.rgb    = toLinear(bgSharp.rgb);
   vec4 bgBase    = mix(bgSharp, bgBlurred, clamp(uParams1.x, 0.0, 1.0) * (1.0 - 0.15 * bevelF));
   bgBase.rgb     = mix(bgBase.rgb, frostTint.rgb, uParams1.x * uParams4.z);

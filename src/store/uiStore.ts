@@ -31,6 +31,7 @@ export const $showAdvancedGlass = atom<boolean>(false);
 export type Webgl2Status = 'inactive' | 'active' | 'error';
 export const $webgl2Status = atom<Webgl2Status>('inactive');
 export const $webgl2Error = atom<string>('');
+export const $webgl2Restores = atom<number>(0);
 
 export function selectLayer(id: string | null) {
   $selectedLayerId.set(id);

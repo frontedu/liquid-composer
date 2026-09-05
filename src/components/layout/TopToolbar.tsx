@@ -18,14 +18,21 @@ function toDisplayAngle(a: number): number {
 
 const DEFAULT_EXPORT: ExportOptions = { format: 'png', size: 1024 };
 const EXPORT_OPTIONS: ExportOptions[] = [
+  { format: 'png',  size: 1024, clipboard: true },
   { format: 'png',  size: 4096 },
   { format: 'png',  size: 2048 },
   { format: 'png',  size: 512 },
   { format: 'png',  size: 256 },
   { format: 'jpeg', size: 1024 },
-  { format: 'webp', size: 1024 },
+  { format: 'png',  size: 1024, allModes: true },
 ];
-const FORMAT_LABEL: Record<ExportOptions['format'], string> = { png: 'PNG', jpeg: 'JPEG', webp: 'WebP' };
+const FORMAT_LABEL: Record<ExportOptions['format'], string> = { png: 'PNG', jpeg: 'JPEG' };
+
+function exportLabel(opt: ExportOptions): string {
+  if (opt.clipboard) return 'Copy PNG';
+  if (opt.allModes)  return 'ZIP';
+  return `${FORMAT_LABEL[opt.format]}${opt.size === 4096 ? ' · 4K' : opt.size === 2048 ? ' · 2K' : ''}`;
+}
 
 export function TopToolbar() {
   const name        = useStore($iconName);
@@ -350,7 +357,7 @@ export function TopToolbar() {
             >
               {EXPORT_OPTIONS.map((opt) => (
                 <button
-                  key={`${opt.format}-${opt.size}`}
+                  key={exportLabel(opt)}
                   role="menuitem"
                   onClick={() => exportAs(opt)}
                   className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors flex items-center justify-between gap-3"
@@ -358,8 +365,8 @@ export function TopToolbar() {
                   onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)')}
                   onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
                 >
-                  <span>{FORMAT_LABEL[opt.format]}{opt.size === 4096 ? ' · 4K' : opt.size === 2048 ? ' · 2K' : ''}</span>
-                  <span className="tabular-nums" style={{ color: 'rgba(255,255,255,0.30)' }}>({opt.size} px)</span>
+                  <span>{exportLabel(opt)}</span>
+                  {!opt.allModes && <span className="tabular-nums" style={{ color: 'rgba(255,255,255,0.30)' }}>({opt.size} px)</span>}
                 </button>
               ))}
             </div>

@@ -75,11 +75,8 @@ function makeFBO(gl: WebGL2RenderingContext, tex: WebGLTexture): WebGLFramebuffe
 
 function uploadSourceTexture(gl: WebGL2RenderingContext, tex: WebGLTexture, source: TexImageSource) {
   gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source);
+  gl.generateMipmap(gl.TEXTURE_2D);
 }
 
 function drawFullscreenQuad(gl: WebGL2RenderingContext, vao: WebGLVertexArrayObject) {
@@ -196,9 +193,20 @@ export class LiquidGlassRenderer {
     this.texB      = makeTexture(gl, sz, sz, hdrSupported);
     this.fboA      = makeFBO(gl, this.texA);
     this.fboB      = makeFBO(gl, this.texB);
-    this.layerTex  = gl.createTexture()!;
-    this.origBgTex = gl.createTexture()!;
+    this.layerTex  = makeTexture(gl, this.size, this.size);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    this.origBgTex = makeTexture(gl, this.size, this.size);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
 
+    const u = this.uniforms;
+    gl.useProgram(this.blurProg);
+    gl.uniform1i(u.blur_uTex, 0);
+    gl.uniform2f(u.blur_uTexelSize, 1 / sz, 1 / sz);
+    gl.useProgram(this.glassProg);
+    gl.uniform1i(u.glass_uLayerTex, 0);
+    gl.uniform1i(u.glass_uBlurredBgTex, 1);
+    gl.uniform1i(u.glass_uOrigBgTex, 2);
+    gl.uniform2f(u.glass_uTexelSize, 1 / this.size, 1 / this.size);
   }
 
   private blurBackground(bgSource: TexImageSource, radius: number, saturate: boolean, bgKey: string) {
@@ -206,12 +214,10 @@ export class LiquidGlassRenderer {
     this._lastBgKey = bgKey;
     const { gl } = this;
     const sz = this.blurSize;
-    const texelSize = 1.0 / sz;
     radius *= sz / this.size;
 
     uploadSourceTexture(gl, this.origBgTex, bgSource);
-    gl.generateMipmap(gl.TEXTURE_2D);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    if (radius === 0) return;
 
     const u = this.uniforms;
 
@@ -222,8 +228,6 @@ export class LiquidGlassRenderer {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.origBgTex);
-    gl.uniform1i(u.blur_uTex, 0);
-    gl.uniform2f(u.blur_uTexelSize, texelSize, texelSize);
     gl.uniform1f(u.blur_uRadius, radius);
     gl.uniform1i(u.blur_uHorizontal, 1);
     gl.uniform1i(u.blur_uSaturate, 0);
@@ -234,7 +238,6 @@ export class LiquidGlassRenderer {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texA);
-    gl.uniform1f(u.blur_uRadius, radius);
     gl.uniform1i(u.blur_uHorizontal, 0);
     gl.uniform1i(u.blur_uSaturate, saturate ? 1 : 0);
     drawFullscreenQuad(gl, this.vao);
@@ -253,8 +256,6 @@ export class LiquidGlassRenderer {
     this.blurBackground(bgSource, blurRadius, params.mode === 1, effectiveBgKey);
 
     uploadSourceTexture(gl, this.layerTex, layerSource);
-    gl.generateMipmap(gl.TEXTURE_2D);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, sz, sz);
@@ -263,20 +264,16 @@ export class LiquidGlassRenderer {
     gl.useProgram(this.glassProg);
 
     const u = this.uniforms;
-    const texelSize = 1.0 / sz;
     const angleRad = (params.lightAngle * Math.PI) / 180;
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.layerTex);
-    gl.uniform1i(u.glass_uLayerTex, 0);
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.texB);
-    gl.uniform1i(u.glass_uBlurredBgTex, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.origBgTex);
-    gl.uniform1i(u.glass_uOrigBgTex, 2);
 
     gl.uniform4f(u.glass_uParams1, params.blur, params.translucency, params.specular ? params.specularIntensity : 0.0, params.opacity);
     gl.uniform4f(u.glass_uParams2, params.darkAdjust, params.monoAdjust, params.aberration, params.mode);
@@ -284,7 +281,6 @@ export class LiquidGlassRenderer {
     gl.uniform4f(u.glass_uParams4, params.ambientRim, params.aoDarken, params.frostiness, params.refraction);
     const bevelTexels = Math.max(1, params.bevel * sz);
     gl.uniform4f(u.glass_uParams5, Math.log2(bevelTexels), bevelTexels, 0.0, 0.0);
-    gl.uniform2f(u.glass_uTexelSize, texelSize, texelSize);
     gl.uniform2f(u.glass_uLightDir, Math.cos(angleRad), Math.sin(angleRad));
     gl.uniform4f(u.glass_uLayerRect, ...params.layerRect);
 

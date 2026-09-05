@@ -18,7 +18,7 @@ function defaultLiquidGlass(): LiquidGlassConfig {
     enabled: true,          // Liquid Glass on by default
     mode: 'individual',
     specular: true,
-    blur: { enabled: false, value: 0 },
+    blur: { enabled: false, value: 50 },
     translucency: { enabled: true, value: 10 },
     dark: { enabled: false, value: 20 },
     mono: { enabled: false, value: 0 },

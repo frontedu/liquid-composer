@@ -20,22 +20,22 @@ function hexToHSL(hex: string): { h: number; s: number; l: number } {
 }
 
 const PRESET_COLORS = [
-  // Row 1 — vivid + blues (7)
-  { hex: '#FF3B30', label: 'Red'    },
-  { hex: '#FF9500', label: 'Orange' },
+  // Row 1 — HIG system colors, default light (7)
+  { hex: '#FF383C', label: 'Red'    },
+  { hex: '#FF8D28', label: 'Orange' },
   { hex: '#FFCC00', label: 'Yellow' },
   { hex: '#34C759', label: 'Green'  },
-  { hex: '#00C7BE', label: 'Teal'   },
-  { hex: '#007AFF', label: 'Blue'   },
-  { hex: '#5AC8FA', label: 'Sky'    },
-  // Row 2 — cool + neutrals, mid-gray removed (7)
+  { hex: '#00C8B3', label: 'Mint'   },
+  { hex: '#00C3D0', label: 'Teal'   },
+  { hex: '#00C0E8', label: 'Cyan'   },
+  // Row 2 — HIG system colors + neutrals (7)
+  { hex: '#0088FF', label: 'Blue'   },
+  { hex: '#6155F5', label: 'Indigo' },
+  { hex: '#CB30E0', label: 'Purple' },
   { hex: '#FF2D55', label: 'Pink'   },
-  { hex: '#5856D6', label: 'Indigo' },
-  { hex: '#AF52DE', label: 'Purple' },
+  { hex: '#AC7F5E', label: 'Brown'  },
   { hex: '#F2F2F7', label: 'White'      },
-  { hex: '#C7C7CC', label: 'Light Gray' },
-  { hex: '#48484A', label: 'Dark Gray'  },
-  { hex: '#1C1C1E', label: 'Near Black'  },
+  { hex: '#1C1C1E', label: 'Near Black' },
 ];
 
 function GradientSlider({

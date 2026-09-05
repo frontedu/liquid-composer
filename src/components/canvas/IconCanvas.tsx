@@ -1,8 +1,8 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { useStore } from '@nanostores/react';
 import { $layers, $background, addLayer, updateLayer } from '../../store/iconStore';
-import { $appearanceMode, $lightAngle, $zoom, $selectedLayerId, $hoveredLayerId, $webgl2Status, $webgl2Error, selectLayer, stepZoom } from '../../store/uiStore';
-import { renderIconToCanvas, exportIcon, type ExportOptions } from '../../engine/IconRenderer';
+import { $appearanceMode, $lightAngle, $zoom, $selectedLayerId, $hoveredLayerId, $webgl2Status, $webgl2Error, $webgl2Restores, selectLayer, stepZoom } from '../../store/uiStore';
+import { renderIconToCanvas, exportIcon, exportZip, type ExportOptions } from '../../engine/IconRenderer';
 import { drawSquirclePath } from '../../engine/ImageProcessor';
 import { BottomBar } from '../layout/BottomBar';
 
@@ -180,6 +180,7 @@ export function IconCanvas() {
   const hoveredLayerId = useStore($hoveredLayerId);
   const webgl2Status = useStore($webgl2Status);
   const webgl2Error = useStore($webgl2Error);
+  const webgl2Restores = useStore($webgl2Restores);
   const [showSafeArea, setShowSafeArea] = useState(false);
   const [snapGuide, setSnapGuide] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
   const { over, handleDragOver, handleDragLeave, handleDrop } = useDragDrop();
@@ -227,7 +228,7 @@ export function IconCanvas() {
       pendingRef.current = null;
       run();
     }
-  }, [layers, background, lightAngle, mode, renderSize]);
+  }, [layers, background, lightAngle, mode, renderSize, webgl2Restores]);
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -242,13 +243,21 @@ export function IconCanvas() {
   useEffect(() => {
     const handler = async (e: Event) => {
       const options = (e as CustomEvent<ExportOptions | null>).detail ?? { format: 'png', size: 1024 };
-      const blob = await exportIcon(layers, background, lightAngle, mode, options).catch((err: unknown) => { console.error(err); return null; });
+      if (options.clipboard) {
+        const png = exportIcon(layers, background, lightAngle, mode, { ...options, format: 'png' });
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]).catch(console.error);
+        return;
+      }
+      const blob = await (options.allModes
+        ? exportZip(layers, background, lightAngle)
+        : exportIcon(layers, background, lightAngle, mode, options)
+      ).catch((err: unknown) => { console.error(err); return null; });
       if (!blob) return;
       const ext = blob.type.replace('image/', '').replace('jpeg', 'jpg');
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `icon-${options.size}.${ext}`;
+      a.download = options.allModes ? 'icon.zip' : `icon-${options.size}.${ext}`;
       a.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
