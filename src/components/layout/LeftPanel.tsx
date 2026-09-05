@@ -1,4 +1,3 @@
-import React from 'react';
 import { LayerTree } from '../layers/LayerTree';
 
 export function LeftPanel() {

@@ -16,7 +16,6 @@ export type BlendMode =
   | 'color'
   | 'luminosity';
 
-// Apple Icon Composer 2025 defines 3 modes: Default, Dark, Clear.
 export type AppearanceMode = 'default' | 'dark' | 'clear';
 
 export interface ColorStop {
@@ -28,6 +27,27 @@ export type FillConfig =
   | { type: 'none' }
   | { type: 'solid'; color: string }
   | { type: 'gradient'; stops: ColorStop[]; angle: number };
+
+export interface LayerEffects {
+  domeIntensity: number;       // 0-100
+  domeRadius: number;          // % of size
+  innerRimWidth: number;       // % of size
+  innerRimLitAlpha: number;    // 0-100
+  innerRimShadowAlpha: number; // 0-100
+  innerShadowWidth: number;    // % of size
+  innerShadowAlpha: number;    // 0-100
+  outerBorderWidth: number;    // % of size
+  outerBorderAlpha: number;    // 0-100
+  specularEdge: number;        // 0-100
+  rimIntensity: number;        // 0-100
+  envReflection: number;       // 0-100
+  innerGlow: number;           // 0-100
+  ambientRim: number;          // 0-100
+  aoDarken: number;            // 0-100
+  frostiness: number;          // 0-100
+  bevel: number;               // % of size
+  refraction: number;          // 0-100
+}
 
 export interface LiquidGlassConfig {
   enabled: boolean;
@@ -42,7 +62,9 @@ export interface LiquidGlassConfig {
     value: number;
     type?: 'chromatic' | 'neutral';
   };
-  // SDF-based rendering parameters (all optional — defaults in renderer)
+  aberration?: number;        // 0-100
+  specularIntensity?: number; // 0-100
+  effects?: Partial<LayerEffects>;
   refraction?: { enabled: boolean; thickness: number; factor: number; dispersion: number };
   fresnel?: { enabled: boolean; range: number; factor: number; hardness: number };
   glare?: { enabled: boolean; range: number; convergence: number; factor: number; angle: number };

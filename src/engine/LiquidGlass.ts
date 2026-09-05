@@ -1,11 +1,6 @@
-// Multi-pass pipeline:
-//   Pass 1: Horizontal separable Gaussian blur  (bg → FBO_A)
-//   Pass 2: Vertical separable Gaussian blur    (FBO_A → FBO_B)
-//   Pass 3: Glass composite with physical lighting (layer + FBO_B + bg → output)
-
-import VERT_SRC  from './shaders/vertex.vert.glsl';
-import BLUR_SRC  from './shaders/blur.frag.glsl';
-import GLASS_SRC from './shaders/liquidGlass.frag.glsl';
+import VERT_SRC  from './shaders/vertex.vert.glsl?raw';
+import BLUR_SRC  from './shaders/blur.frag.glsl?raw';
+import GLASS_SRC from './shaders/liquidGlass.frag.glsl?raw';
 
 export interface LiquidGlassParams {
   blur: number;              // 0-1
@@ -18,6 +13,16 @@ export interface LiquidGlassParams {
   darkAdjust: number;
   monoAdjust: number;
   aberration: number;        // 0-1
+  specularEdge: number;
+  rimIntensity: number;
+  envReflection: number;
+  innerGlow: number;
+  ambientRim: number;
+  aoDarken: number;
+  frostiness: number;
+  refraction: number;        // 0-1
+  bevel: number;             // fraction of size
+  layerRect: [number, number, number, number]; // center x, y and half extents, in UV
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
@@ -49,7 +54,6 @@ function makeTexture(gl: WebGL2RenderingContext, w: number, h: number, hdr = fal
   const tex = gl.createTexture()!;
   gl.bindTexture(gl.TEXTURE_2D, tex);
   if (hdr) {
-    // HDR: RGBA16F allows values > 1.0 for proper bloom/specular accumulation
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
   } else {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -84,7 +88,6 @@ function drawFullscreenQuad(gl: WebGL2RenderingContext, vao: WebGLVertexArrayObj
   gl.bindVertexArray(null);
 }
 
-// Cached uniform locations for a program — avoids gl.getUniformLocation() every frame
 interface UniformCache {
   blur_uTex: WebGLUniformLocation | null;
   blur_uTexelSize: WebGLUniformLocation | null;
@@ -96,8 +99,12 @@ interface UniformCache {
   glass_uOrigBgTex: WebGLUniformLocation | null;
   glass_uParams1: WebGLUniformLocation | null;
   glass_uParams2: WebGLUniformLocation | null;
+  glass_uParams3: WebGLUniformLocation | null;
+  glass_uParams4: WebGLUniformLocation | null;
+  glass_uParams5: WebGLUniformLocation | null;
   glass_uTexelSize: WebGLUniformLocation | null;
   glass_uLightDir: WebGLUniformLocation | null;
+  glass_uLayerRect: WebGLUniformLocation | null;
 }
 
 export class LiquidGlassRenderer {
@@ -115,8 +122,12 @@ export class LiquidGlassRenderer {
 
   private layerTex: WebGLTexture;
   private origBgTex: WebGLTexture;
+  private posBuf: WebGLBuffer;
+  private uvBuf: WebGLBuffer;
 
   private size: number;
+  private blurSize: number;
+  readonly canvas: HTMLCanvasElement;
   private _lastBgKey: string = '';
 
   constructor(canvas: HTMLCanvasElement) {
@@ -129,11 +140,13 @@ export class LiquidGlassRenderer {
     if (!gl) throw new Error('WebGL2 not supported');
     this.gl = gl;
     this.size = canvas.width;
+    const maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+    if (this.size > maxTexture) throw new Error(`Render size ${this.size} exceeds MAX_TEXTURE_SIZE ${maxTexture}`);
+    this.canvas = canvas;
 
     this.blurProg  = createProgram(gl, BLUR_SRC);
     this.glassProg = createProgram(gl, GLASS_SRC);
 
-    // Cache all uniform locations once — avoids redundant driver lookups per frame
     this.uniforms = {
       blur_uTex:        gl.getUniformLocation(this.blurProg,  'uTex'),
       blur_uTexelSize:  gl.getUniformLocation(this.blurProg,  'uTexelSize'),
@@ -145,8 +158,12 @@ export class LiquidGlassRenderer {
       glass_uOrigBgTex:    gl.getUniformLocation(this.glassProg, 'uOrigBgTex'),
       glass_uParams1:      gl.getUniformLocation(this.glassProg, 'uParams1'),
       glass_uParams2:      gl.getUniformLocation(this.glassProg, 'uParams2'),
+      glass_uParams3:      gl.getUniformLocation(this.glassProg, 'uParams3'),
+      glass_uParams4:      gl.getUniformLocation(this.glassProg, 'uParams4'),
+      glass_uParams5:      gl.getUniformLocation(this.glassProg, 'uParams5'),
       glass_uTexelSize:    gl.getUniformLocation(this.glassProg, 'uTexelSize'),
       glass_uLightDir:     gl.getUniformLocation(this.glassProg, 'uLightDir'),
+      glass_uLayerRect:    gl.getUniformLocation(this.glassProg, 'uLayerRect'),
     };
 
     // VAO + buffers (fullscreen quad, shared by all passes)
@@ -156,25 +173,24 @@ export class LiquidGlassRenderer {
     const positions = new Float32Array([-1, -1,  1, -1, -1, 1,  1, 1]);
     const uvs       = new Float32Array([ 0,  1,  1,  1,  0, 0,  1, 0]);
 
-    // Use explicit locations from layout(location=N) in vertex shader
-    const posBuf = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    this.posBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuf);
     gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-    const uvBuf = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+    this.uvBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuf);
     gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(1);
     gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
 
     gl.bindVertexArray(null);
 
-    const sz = this.size;
+    const sz = Math.min(this.size, 1024);
+    this.blurSize = sz;
 
-    // HDR: check if rendering to float textures is supported (EXT_color_buffer_float)
-    const hdrSupported = !!gl.getExtension('EXT_color_buffer_float');
+    const hdrSupported = !!(gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float'));
 
     this.texA      = makeTexture(gl, sz, sz, hdrSupported);
     this.texB      = makeTexture(gl, sz, sz, hdrSupported);
@@ -183,19 +199,19 @@ export class LiquidGlassRenderer {
     this.layerTex  = gl.createTexture()!;
     this.origBgTex = gl.createTexture()!;
 
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
   private blurBackground(bgSource: TexImageSource, radius: number, saturate: boolean, bgKey: string) {
     if (bgKey && bgKey === this._lastBgKey) return;
     this._lastBgKey = bgKey;
     const { gl } = this;
-    const sz = this.size;
+    const sz = this.blurSize;
     const texelSize = 1.0 / sz;
+    radius *= sz / this.size;
 
-    // Upload original bg to origBgTex (used in glass pass for sharp background)
     uploadSourceTexture(gl, this.origBgTex, bgSource);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
 
     const u = this.uniforms;
 
@@ -210,7 +226,7 @@ export class LiquidGlassRenderer {
     gl.uniform2f(u.blur_uTexelSize, texelSize, texelSize);
     gl.uniform1f(u.blur_uRadius, radius);
     gl.uniform1i(u.blur_uHorizontal, 1);
-    gl.uniform1i(u.blur_uSaturate, saturate ? 1 : 0);
+    gl.uniform1i(u.blur_uSaturate, 0);
     drawFullscreenQuad(gl, this.vao);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboB);
@@ -233,11 +249,12 @@ export class LiquidGlassRenderer {
     // Compute blur radius in texel units (0 = no blur)
     const blurRadius = params.blur * sz * 0.028;
 
-    // Re-blur bg only if bgKey changed — skips redundant GPU upload+blur for same background
-    const effectiveBgKey = `${bgKey}:${blurRadius.toFixed(2)}:${params.mode}`;
+    const effectiveBgKey = bgKey ? `${bgKey}:${blurRadius.toFixed(2)}:${params.mode}` : '';
     this.blurBackground(bgSource, blurRadius, params.mode === 1, effectiveBgKey);
 
     uploadSourceTexture(gl, this.layerTex, layerSource);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, sz, sz);
@@ -263,8 +280,13 @@ export class LiquidGlassRenderer {
 
     gl.uniform4f(u.glass_uParams1, params.blur, params.translucency, params.specular ? params.specularIntensity : 0.0, params.opacity);
     gl.uniform4f(u.glass_uParams2, params.darkAdjust, params.monoAdjust, params.aberration, params.mode);
+    gl.uniform4f(u.glass_uParams3, params.specularEdge, params.rimIntensity, params.envReflection, params.innerGlow);
+    gl.uniform4f(u.glass_uParams4, params.ambientRim, params.aoDarken, params.frostiness, params.refraction);
+    const bevelTexels = Math.max(1, params.bevel * sz);
+    gl.uniform4f(u.glass_uParams5, Math.log2(bevelTexels), bevelTexels, 0.0, 0.0);
     gl.uniform2f(u.glass_uTexelSize, texelSize, texelSize);
     gl.uniform2f(u.glass_uLightDir, Math.cos(angleRad), Math.sin(angleRad));
+    gl.uniform4f(u.glass_uLayerRect, ...params.layerRect);
 
     drawFullscreenQuad(gl, this.vao);
   }
@@ -279,6 +301,8 @@ export class LiquidGlassRenderer {
     gl.deleteFramebuffer(this.fboB);
     gl.deleteProgram(this.blurProg);
     gl.deleteProgram(this.glassProg);
+    gl.deleteBuffer(this.posBuf);
+    gl.deleteBuffer(this.uvBuf);
     gl.deleteVertexArray(this.vao);
   }
 }

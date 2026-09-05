@@ -17,6 +17,7 @@ export const LIGHT_ANGLE_LABELS: Record<number, string> = {
   '135': 'Top Left',
 };
 
+export const CANVAS_SELECTION_ID = '__canvas__';
 export const $selectedLayerId = atom<string | null>(null);
 export const $hoveredLayerId = atom<string | null>(null);
 export const $appearanceMode = atom<AppearanceMode>('default');
@@ -26,6 +27,7 @@ export const $inspectorTab = atom<'brush' | 'document'>('brush');
 export const $isDragOver = atom<boolean>(false);
 export const $showBackgroundPicker = atom<boolean>(false);
 export const $persistenceEnabled = atom<boolean>(true);
+export const $showAdvancedGlass = atom<boolean>(false);
 export type Webgl2Status = 'inactive' | 'active' | 'error';
 export const $webgl2Status = atom<Webgl2Status>('inactive');
 export const $webgl2Error = atom<string>('');

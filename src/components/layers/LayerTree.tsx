@@ -8,15 +8,12 @@ import {
   moveLayerToGroup,
   removeLayer,
 } from '../../store/iconStore';
-import { $persistenceEnabled, $selectedLayerId, selectLayer } from '../../store/uiStore';
+import { $persistenceEnabled, $selectedLayerId, selectLayer, CANVAS_SELECTION_ID } from '../../store/uiStore';
 import { clearPersistence } from '../../store/persistence';
 import { LayerItem } from './LayerItem';
 import { Toggle } from '../ui/Toggle';
 import type { Layer } from '../../types/index';
-import { Folder, Plus, CloudArrowDown, Trash } from '@phosphor-icons/react';
-
-// We flatten the tree into a single ordered array of typed rows.
-// This avoids React.Fragment nesting and makes the DnD logic straightforward.
+import { Folder, Plus, CloudArrowDown, Trash, Square } from '@phosphor-icons/react';
 
 type ItemRow = { kind: 'item'; layer: Layer; depth: number };
 type GapRow = {
@@ -38,7 +35,6 @@ function buildRows(layers: Layer[]): Row[] {
 
   if (roots.length === 0) return rows;
 
-  // Gap before the very first root item
   rows.push({
     kind: 'gap',
     key: `root:${roots[0].id}:before`,
@@ -59,7 +55,6 @@ function buildRows(layers: Layer[]): Row[] {
       if (children.length === 0) {
         rows.push({ kind: 'empty-group', key: `empty:${root.id}`, groupId: root.id, depth: 1 });
       } else {
-        // Gap before first child
         rows.push({
           kind: 'gap',
           key: `${root.id}:${children[0].id}:before`,
@@ -82,7 +77,6 @@ function buildRows(layers: Layer[]): Row[] {
       }
     }
 
-    // Gap after this root item (also serves as gap between consecutive root items)
     rows.push({
       kind: 'gap',
       key: `root:${root.id}:after`,
@@ -99,26 +93,17 @@ function buildRows(layers: Layer[]): Row[] {
 function DropGap({
   isActive,
   depth,
-  prominent,
   onDragOver,
   onDrop,
 }: {
   isActive: boolean;
   depth: number;
-  /** larger hit area — used for root-level gaps when a child layer is being dragged */
-  prominent?: boolean;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
 }) {
-  const height = isActive ? 14 : prominent ? 10 : 3;
   return (
     <div
-      style={{
-        paddingLeft: `${(depth + 1) * 12}px`,
-        height,
-        position: 'relative',
-        transition: 'height 60ms',
-      }}
+      style={{ paddingLeft: `${(depth + 1) * 12}px`, height: 4, position: 'relative' }}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
@@ -245,23 +230,22 @@ function SettingsDropdown() {
 
 export function LayerTree() {
   const layers = useStore($layers);
+  const selectedId = useStore($selectedLayerId);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [activeGapKey, setActiveGapKey] = useState<string | null>(null);
   const [groupHoverId, setGroupHoverId] = useState<string | null>(null);
+  const [edgeTarget, setEdgeTarget] = useState<{ layerId: string; position: 'before' | 'after' } | null>(null);
 
   const rows = buildRows(layers);
-
-  const draggingIsChild = draggingId
-    ? (layers.find((l) => l.id === draggingId)?.parentId ?? null) !== null
-    : false;
+  const draggingLayer = draggingId ? layers.find((l) => l.id === draggingId) : undefined;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const selectedId = $selectedLayerId.get();
-        if (selectedId) {
+        if (selectedId && selectedId !== CANVAS_SELECTION_ID) {
           e.preventDefault();
           removeLayer(selectedId);
           selectLayer(null);
@@ -279,11 +263,16 @@ export function LayerTree() {
     });
   }, []);
 
-  const resetDrag = useCallback(() => {
-    setDraggingId(null);
+  const clearTargets = useCallback(() => {
     setActiveGapKey(null);
     setGroupHoverId(null);
+    setEdgeTarget(null);
   }, []);
+
+  const resetDrag = useCallback(() => {
+    setDraggingId(null);
+    clearTargets();
+  }, [clearTargets]);
 
   const handleGapDrop = useCallback(
     (parentId: string | null, targetId: string, position: 'before' | 'after') => {
@@ -291,7 +280,7 @@ export function LayerTree() {
       const allLayers = $layers.get();
       const dragging = allLayers.find((l) => l.id === draggingId);
       if (!dragging || dragging.id === targetId) return;
-      // Reparent if needed, then reorder
+      if (dragging.type === 'group' && parentId !== null) return;
       if (dragging.parentId !== parentId) {
         moveLayerToGroup(draggingId, parentId);
       }
@@ -304,26 +293,50 @@ export function LayerTree() {
   // ── Inside-group drop (empty groups / collapsed groups) ──────────────────────
   const handleInsideDrop = useCallback(
     (groupId: string) => {
-      if (!draggingId || draggingId === groupId) return;
+      if (!draggingId || draggingId === groupId || draggingLayer?.type === 'group') return;
       moveLayerToGroup(draggingId, groupId);
       resetDrag();
     },
-    [draggingId, resetDrag],
+    [draggingId, draggingLayer, resetDrag],
   );
 
-  // ── Eject child to root, positioned just before its parent group ──────────────
-  const handleEjectAboveGroup = useCallback(
-    (groupId: string) => {
-      if (!draggingId) return;
-      const allLayers = $layers.get();
-      const dragging = allLayers.find((l) => l.id === draggingId);
-      if (!dragging || dragging.parentId !== groupId) return;
-      moveLayerToGroup(draggingId, null);
-      reorderLayer(draggingId, groupId, 'before');
-      resetDrag();
-    },
-    [draggingId, resetDrag],
-  );
+  const zoneFor = (e: React.DragEvent<HTMLDivElement>, layer: Layer): 'before' | 'after' | 'inside' => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const t = (e.clientY - rect.top) / rect.height;
+    if (layer.type === 'group' && draggingLayer?.type !== 'group') {
+      if (layer.collapsed) return t < 0.25 ? 'before' : t > 0.75 ? 'after' : 'inside';
+      return t < 0.3 ? 'before' : 'inside';
+    }
+    return t < 0.5 ? 'before' : 'after';
+  };
+
+  const groupIntoGroup = (parentId: string | null) => draggingLayer?.type === 'group' && parentId !== null;
+  const canTarget = (layer: Layer) => !!draggingId && draggingId !== layer.id && layer.parentId !== draggingId && !groupIntoGroup(layer.parentId);
+
+  const handleItemDragOver = (e: React.DragEvent<HTMLDivElement>, layer: Layer) => {
+    if (!canTarget(layer)) { clearTargets(); return; }
+    const zone = zoneFor(e, layer);
+    setActiveGapKey(null);
+    if (zone === 'inside') {
+      setEdgeTarget(null);
+      setGroupHoverId(layer.id);
+    } else {
+      setGroupHoverId(null);
+      setEdgeTarget((prev) => (prev?.layerId === layer.id && prev.position === zone ? prev : { layerId: layer.id, position: zone }));
+    }
+  };
+
+  const handleItemDrop = (e: React.DragEvent<HTMLDivElement>, layer: Layer) => {
+    if (!canTarget(layer)) { resetDrag(); return; }
+    const zone = zoneFor(e, layer);
+    if (zone === 'inside') {
+      const first = layers.filter((l) => l.parentId === layer.id).sort((a, b) => b.order - a.order)[0];
+      if (first && !layer.collapsed) handleGapDrop(layer.id, first.id, 'before');
+      else handleInsideDrop(layer.id);
+    } else {
+      handleGapDrop(layer.parentId, layer.id, zone);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -352,6 +365,7 @@ export function LayerTree() {
       <div
         className="flex-1 overflow-y-auto flex flex-col"
         onDragEnd={resetDrag}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) clearTargets(); }}
       >
         {layers.length === 0 ? (
           <FileUploadZone onFiles={handleFiles} />
@@ -367,12 +381,13 @@ export function LayerTree() {
                     key={row.key}
                     isActive={isActive}
                     depth={row.depth}
-                    prominent={row.depth === 0 && !!draggingId}
                     onDragOver={(e) => {
+                      if (groupIntoGroup(row.parentId)) return;
                       e.preventDefault();
                       e.stopPropagation();
                       setActiveGapKey(row.key);
                       setGroupHoverId(null);
+                      setEdgeTarget(null);
                     }}
                     onDrop={(e) => {
                       e.preventDefault();
@@ -394,6 +409,7 @@ export function LayerTree() {
                       e.stopPropagation();
                       setGroupHoverId(row.groupId);
                       setActiveGapKey(null);
+                      setEdgeTarget(null);
                     }}
                     onDrop={(e) => {
                       e.preventDefault();
@@ -405,50 +421,34 @@ export function LayerTree() {
               }
 
               const { layer, depth } = row;
-              // The expanded group header is an eject target when we're dragging
-              // one of its own children over it
-              const isMyChild = draggingIsChild &&
-                layers.find((l) => l.id === draggingId)?.parentId === layer.id;
-              const isEjectTarget = layer.type === 'group' && !layer.collapsed && !!isMyChild;
-              const isInsideTarget =
-                layer.type === 'group' && groupHoverId === layer.id && !isEjectTarget;
-
               return (
                 <LayerItem
                   key={layer.id}
                   layer={layer}
                   depth={depth}
                   isDragging={draggingId === layer.id}
-                  isInsideTarget={isInsideTarget || isEjectTarget}
-                  onDragStart={(id) => { setDraggingId(id); setActiveGapKey(null); }}
+                  isInsideTarget={layer.type === 'group' && groupHoverId === layer.id}
+                  dropEdge={edgeTarget?.layerId === layer.id ? edgeTarget.position : null}
+                  onDragStart={(id) => { setDraggingId(id); clearTargets(); }}
                   onDragEnd={resetDrag}
-                  onDragOver={() => {
-                    if (layer.type === 'group' && !layer.collapsed && isMyChild) {
-                      // Dragging own child over group header → eject above
-                      setGroupHoverId(null);
-                      setActiveGapKey(null);
-                    } else if (layer.type === 'group') {
-                      // Both collapsed and expanded groups accept drops
-                      setGroupHoverId(layer.id);
-                      setActiveGapKey(null);
-                    } else {
-                      setGroupHoverId(null);
-                      setActiveGapKey(null);
-                    }
-                  }}
-                  onDrop={
-                    isEjectTarget
-                      ? () => handleEjectAboveGroup(layer.id)
-                      : layer.type === 'group'
-                      ? () => handleInsideDrop(layer.id)
-                      : undefined
-                  }
+                  onDragOver={(e) => handleItemDragOver(e, layer)}
+                  onDrop={(e) => handleItemDrop(e, layer)}
                 />
               );
             })}
           </>
         )}
       </div>
+      <button
+        type="button"
+        draggable={false}
+        aria-pressed={selectedId === CANVAS_SELECTION_ID}
+        onClick={() => selectLayer(CANVAS_SELECTION_ID)}
+        className={`flex items-center gap-2 px-3 min-h-9 mx-1 mb-1 shrink-0 rounded-[6px] border-t border-white/[0.04] text-xs text-left transition-colors ${selectedId === CANVAS_SELECTION_ID ? 'bg-[#0a84ff]/65 text-white' : 'text-[#ebebf5] hover:bg-white/[0.06]'}`}
+      >
+        <Square size={18} aria-hidden="true" />
+        Canvas
+      </button>
     </div>
   );
 }

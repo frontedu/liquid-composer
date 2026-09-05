@@ -1,4 +1,4 @@
-import { atom, computed } from 'nanostores';
+import { atom, batch, computed } from 'nanostores';
 import { selectLayer } from './uiStore';
 import type {
   Layer,
@@ -23,6 +23,8 @@ function defaultLiquidGlass(): LiquidGlassConfig {
     dark: { enabled: false, value: 20 },
     mono: { enabled: false, value: 0 },
     shadow: { type: 'chromatic', enabled: true, value: 30 },
+    aberration: 20,
+    specularIntensity: 100,
   };
 }
 
@@ -64,7 +66,6 @@ export function bgColorsFromHueTint(hue: number, tint: number, brightness = 100)
   const t = tint / 100;                                        // 0 = vivid, 1 = pure white/gray
   const s1 = Math.max(0, Math.round(85 * (1 - t)));            // 85 → 0
   const s2 = Math.max(0, Math.round(68 * (1 - t)));            // 68 → 0
-  // Lightness scales so that tint=100 + brightness=100 → l=100% (pure white)
   const l1 = Math.min(100, Math.round((48 + tint * 0.52) * bFactor));
   const l2 = Math.min(100, Math.round((61 + tint * 0.39) * bFactor));
   return [`hsl(${hue}, ${s1}%, ${l1}%)`, `hsl(${hue}, ${s2}%, ${l2}%)`];
@@ -100,16 +101,17 @@ export function addLayer(blobUrl?: string, sourceFile?: string, parentId: string
   if (blobUrl) layer.blobUrl = blobUrl;
   if (sourceFile) layer.sourceFile = sourceFile;
 
-  // Raster images: disable glass by default (no clean alpha silhouette) + scale 100%
   const isRaster = sourceFile && /\.(png|jpe?g|webp)$/i.test(sourceFile);
   if (isRaster) {
     layer.liquidGlass = { ...layer.liquidGlass, enabled: false };
     layer.layout = { x: 0, y: 0, scale: 100 };
   }
 
-  $layers.set([...layers, layer]);
-  $iconModified.set(true);
-  selectLayer(layer.id);
+  batch(() => {
+    $layers.set([...layers, layer]);
+    $iconModified.set(true);
+    selectLayer(layer.id);
+  });
   return layer.id;
 }
 
@@ -120,9 +122,11 @@ export function addGroup() {
   const maxOrder = rootSiblings.length > 0 ? Math.max(...rootSiblings.map((l) => l.order)) : -1;
   const group = createGroup(`Group ${layers.filter((l) => l.type === 'group').length + 1}`);
   group.order = maxOrder + 1;
-  $layers.set([...layers, group]);
-  $iconModified.set(true);
-  selectLayer(group.id);
+  batch(() => {
+    $layers.set([...layers, group]);
+    $iconModified.set(true);
+    selectLayer(group.id);
+  });
   return group.id;
 }
 
@@ -153,16 +157,20 @@ export function updateLayer(id: string, updates: Partial<Layer>) {
   $iconModified.set(true);
 }
 
+function mergeLiquidGlass(base: LiquidGlassConfig, lg: Partial<LiquidGlassConfig>): LiquidGlassConfig {
+  return { ...base, ...lg, ...(lg.effects && { effects: { ...base.effects, ...lg.effects } }) };
+}
+
 export function updateLayerLiquidGlass(id: string, lg: Partial<LiquidGlassConfig>) {
   const layer = $layers.get().find((l) => l.id === id);
-  if (layer) updateLayer(id, { liquidGlass: { ...layer.liquidGlass, ...lg } });
+  if (layer) updateLayer(id, { liquidGlass: mergeLiquidGlass(layer.liquidGlass, lg) });
 }
 
 export function updateAllLayersLiquidGlass(updates: Partial<LiquidGlassConfig>) {
   $layers.set(
     $layers.get().map((l) => ({
       ...l,
-      liquidGlass: { ...l.liquidGlass, ...updates }
+      liquidGlass: mergeLiquidGlass(l.liquidGlass, updates),
     }))
   );
   $iconModified.set(true);
@@ -198,7 +206,6 @@ export function reorderLayer(id: string, targetId: string, position: 'before' | 
   const layer = layers.find((l) => l.id === id);
   if (!layer) return;
 
-  // Visual order: descending (highest order = top of list = index 0)
   const siblings = layers
     .filter((l) => l.parentId === layer.parentId)
     .sort((a, b) => b.order - a.order);
@@ -213,7 +220,6 @@ export function reorderLayer(id: string, targetId: string, position: 'before' | 
     withoutDragged.splice(targetIdx + 1, 0, layer);
   }
 
-  // Reassign dense orders: top item gets highest, bottom gets 0
   const n = withoutDragged.length;
   const updated = layers.map((l) => {
     const idx = withoutDragged.findIndex((s) => s.id === l.id);
@@ -235,8 +241,10 @@ export function updateBackground(bg: Partial<BackgroundConfig>) {
 }
 
 export function resetDocument() {
-  $iconName.set('Untitled');
-  $iconModified.set(false);
-  $layers.set([]);
-  $background.set({ type: 'gradient', hue: 220, tint: 20, colors: bgColorsFromHueTint(220, 20), angle: 135 });
+  batch(() => {
+    $iconName.set('Untitled');
+    $iconModified.set(false);
+    $layers.set([]);
+    $background.set({ type: 'gradient', hue: 220, tint: 20, colors: bgColorsFromHueTint(220, 20), angle: 135 });
+  });
 }

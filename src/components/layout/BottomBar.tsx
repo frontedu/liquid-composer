@@ -1,4 +1,3 @@
-import React from 'react';
 import { useStore } from '@nanostores/react';
 import { $appearanceMode, setAppearanceMode } from '../../store/uiStore';
 import type { AppearanceMode } from '../../types/index';

@@ -9,8 +9,8 @@ interface NumberInputProps {
   unit?: string;
   label?: string;
   className?: string;
-  /** Units changed per pixel of horizontal drag. Default: 1 */
   dragSensitivity?: number;
+  ariaLabel?: string;
 }
 
 export function NumberInput({
@@ -23,6 +23,7 @@ export function NumberInput({
   label,
   className = '',
   dragSensitivity = 1,
+  ariaLabel,
 }: NumberInputProps) {
   const startRef = useRef<{ x: number; val: number } | null>(null);
   const rafRef = useRef<number>(0);
@@ -75,15 +76,16 @@ export function NumberInput({
           {label}
         </span>
       )}
-      <div className="flex items-center bg-white/[0.06] border border-white/[0.08] rounded-md overflow-hidden">
+      <div className="inspector-number-field flex items-center bg-white/[0.06] border border-white/[0.08] rounded-md overflow-hidden">
         <input
+          aria-label={ariaLabel ?? label ?? unit}
           type="number"
           value={value}
           min={min}
           max={max}
           step={step}
-          onChange={(e) => onChange(clamp(Number(e.target.value)))}
-          className="w-12 text-xs text-center bg-transparent text-[#ebebf5] focus:outline-none px-1 py-0.5"
+          onChange={(e) => { if (e.target.validity.badInput) return; onChange(clamp(Number(e.target.value))); }}
+          className="w-12 text-xs text-center bg-transparent text-[#ebebf5] focus:outline-hidden px-1 py-0.5"
         />
         {unit && (
           <span

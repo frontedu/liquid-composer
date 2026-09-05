@@ -1,40 +1,7 @@
-export async function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
-export async function loadImageToCanvas(
-  url: string,
-  width: number,
-  height: number
-): Promise<HTMLCanvasElement> {
-  const img = await loadImage(url);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d')!;
-
-  const scale = Math.min(width / img.naturalWidth, height / img.naturalHeight);
-  const w = img.naturalWidth * scale;
-  const h = img.naturalHeight * scale;
-  const x = (width - w) / 2;
-  const y = (height - h) / 2;
-
-  ctx.drawImage(img, x, y, w, h);
-  return canvas;
-}
-
 export function drawSquirclePath(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, n = 5) {
   const r = size / 2;
   const cx = x + r;
   const cy = y + r;
-  // Adaptive steps: ensure each segment is sub-pixel (≤ ~0.8px arc length)
-  // so the polygon is indistinguishable from a smooth curve at any display density.
   const steps = Math.max(512, Math.ceil(size * 4));
 
   ctx.beginPath();
@@ -48,24 +15,6 @@ export function drawSquirclePath(ctx: CanvasRenderingContext2D, x: number, y: nu
     else ctx.lineTo(px, py);
   }
   ctx.closePath();
-}
-
-export function drawSquirclePathToPath2D(size: number, n = 5): Path2D {
-  const path = new Path2D();
-  const r = size / 2;
-  const steps = Math.max(360, Math.ceil(size * 2));
-
-  for (let i = 0; i <= steps; i++) {
-    const angle = (i * 2 * Math.PI) / steps;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    const px = r + r * Math.sign(cos) * Math.pow(Math.abs(cos), 2 / n);
-    const py = r + r * Math.sign(sin) * Math.pow(Math.abs(sin), 2 / n);
-    if (i === 0) path.moveTo(px, py);
-    else path.lineTo(px, py);
-  }
-  path.closePath();
-  return path;
 }
 
 export function createBackgroundCanvas(

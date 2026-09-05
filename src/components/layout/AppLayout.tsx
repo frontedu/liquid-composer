@@ -1,4 +1,3 @@
-import React from 'react';
 import { TopToolbar } from './TopToolbar';
 import { LeftPanel } from './LeftPanel';
 import { IconCanvas } from '../canvas/IconCanvas';

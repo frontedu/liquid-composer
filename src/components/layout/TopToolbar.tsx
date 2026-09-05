@@ -1,119 +1,31 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@nanostores/react';
 import { CaretDown, Sun, MagnifyingGlass } from '@phosphor-icons/react';
+import type { ExportOptions } from '../../engine/IconRenderer';
+import { BackgroundControls } from '../inspector/BackgroundControls';
 import {
-  $iconName, $iconModified, updateBackground, $background,
+  $iconName, $iconModified, $background,
   setIconName, bgColorsFromHueTint,
 } from '../../store/iconStore';
 import {
   $lightAngle, $zoom, setLightAngle, setZoom, ZOOM_LEVELS,
-  LIGHT_ANGLE_LEVELS, LIGHT_ANGLE_LABELS, $webgl2Status, $webgl2Error,
+  LIGHT_ANGLE_LEVELS, LIGHT_ANGLE_LABELS,
 } from '../../store/uiStore';
 
-/** Convert internal angle (0°=right, CCW positive) to display angle (0°=top, CW positive).
- *  e.g. 135 → -45,  45 → +45,  90 → 0,  180 → -90 */
 function toDisplayAngle(a: number): number {
   return ((90 - a + 540) % 360) - 180;
 }
 
-function hexToHSL(hex: string): { h: number; s: number; l: number } {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const l   = (max + min) / 2;
-  const d   = max - min;
-  if (d === 0) return { h: 0, s: 0, l: Math.round(l * 100) };
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  let h = 0;
-  if (max === r)      h = (g - b) / d + (g < b ? 6 : 0);
-  else if (max === g) h = (b - r) / d + 2;
-  else                h = (r - g) / d + 4;
-  return { h: Math.round((h / 6) * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
-}
-
-const PRESET_COLORS = [
-  // Row 1 — vivid + blues (7)
-  { hex: '#FF3B30', label: 'Red'    },
-  { hex: '#FF9500', label: 'Orange' },
-  { hex: '#FFCC00', label: 'Yellow' },
-  { hex: '#34C759', label: 'Green'  },
-  { hex: '#00C7BE', label: 'Teal'   },
-  { hex: '#007AFF', label: 'Blue'   },
-  { hex: '#5AC8FA', label: 'Sky'    },
-  // Row 2 — cool + neutrals, mid-gray removed (7)
-  { hex: '#FF2D55', label: 'Pink'   },
-  { hex: '#5856D6', label: 'Indigo' },
-  { hex: '#AF52DE', label: 'Purple' },
-  { hex: '#F2F2F7', label: 'White'      },
-  { hex: '#C7C7CC', label: 'Light Gray' },
-  { hex: '#48484A', label: 'Dark Gray'  },
-  { hex: '#1C1C1E', label: 'Near Black'  },
+const DEFAULT_EXPORT: ExportOptions = { format: 'png', size: 1024 };
+const EXPORT_OPTIONS: ExportOptions[] = [
+  { format: 'png',  size: 4096 },
+  { format: 'png',  size: 2048 },
+  { format: 'png',  size: 512 },
+  { format: 'png',  size: 256 },
+  { format: 'jpeg', size: 1024 },
+  { format: 'webp', size: 1024 },
 ];
-
-function GradientSlider({
-  value, min, max, trackGradient, thumbColor, onChange, onRelease,
-}: {
-  value: number; min: number; max: number;
-  trackGradient: string; thumbColor: string;
-  onChange: (v: number) => void;
-  onRelease?: (v: number) => void;
-}) {
-  const trackRef  = React.useRef<HTMLDivElement>(null);
-  const lastVal   = React.useRef(value);
-  const pct = ((value - min) / (max - min)) * 100;
-
-  const valueFromPointer = (clientX: number) => {
-    const rect = trackRef.current!.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    return Math.round(min + ratio * (max - min));
-  };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const rect = trackRef.current!.getBoundingClientRect();
-    const thumbX = rect.left + (pct / 100) * rect.width;
-    if (Math.abs(e.clientX - thumbX) > 10) {
-      const v = valueFromPointer(e.clientX);
-      lastVal.current = v;
-      onChange(v);
-    }
-    const onMove = (ev: MouseEvent) => {
-      const v = valueFromPointer(ev.clientX);
-      lastVal.current = v;
-      onChange(v);
-    };
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      onRelease?.(lastVal.current); // flush final value immediately
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  };
-
-  return (
-    <div
-      ref={trackRef}
-      className="relative h-5 flex items-center cursor-pointer select-none"
-      onMouseDown={handleMouseDown}
-    >
-      <div
-        className="absolute left-0 right-0 h-[10px] rounded-full"
-        style={{ background: trackGradient, boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.4)' }}
-      />
-      <div
-        className="absolute top-1/2 -translate-y-1/2 w-[14px] h-[14px] rounded-full pointer-events-none"
-        style={{
-          left: `calc(${pct}% - 7px)`,
-          background: thumbColor,
-          boxShadow: '0 1px 4px rgba(0,0,0,0.5), 0 0 0 1.5px rgba(255,255,255,0.25)',
-        }}
-      />
-    </div>
-  );
-}
+const FORMAT_LABEL: Record<ExportOptions['format'], string> = { png: 'PNG', jpeg: 'JPEG', webp: 'WebP' };
 
 export function TopToolbar() {
   const name        = useStore($iconName);
@@ -121,92 +33,21 @@ export function TopToolbar() {
   const lightAngle  = useStore($lightAngle);
   const zoom        = useStore($zoom);
   const bg          = useStore($background);
-  const webgl2Status = useStore($webgl2Status);
-  const webgl2Error = useStore($webgl2Error);
-  const webglPopoverText =
-    webgl2Status === 'active'
-      ? 'WebGL2 active'
-      : webgl2Status === 'error'
-        ? `WebGL2 error: ${webgl2Error || 'Unknown error'}`
-        : 'WebGL2 inactive (Canvas 2D)';
 
   const [showBgPicker,   setShowBgPicker]  = useState(false);
   const [showZoomMenu,   setShowZoomMenu]  = useState(false);
   const [showLightMenu,  setShowLightMenu] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [editingName,    setEditingName]   = useState(false);
   const [nameInput,      setNameInput]     = useState(name);
 
   const bgPickerRef   = useRef<HTMLDivElement>(null);
   const zoomMenuRef   = useRef<HTMLDivElement>(null);
   const lightMenuRef  = useRef<HTMLDivElement>(null);
-  const colorInputRef = useRef<HTMLInputElement>(null);
-
-  const storeBgType     = bg.bgType     ?? 'preset';
-  const storeStops      = bg.stops      ?? [{ offset: 0, color: '#2a2a2e' }, { offset: 1, color: '#1a1a1e' }];
-  const storeHue        = bg.hue        ?? 220;
-  const storeTint       = bg.tint       ?? 20;
-  const storeBrightness = bg.brightness ?? 100;
-
-  // Local state — updates immediately so sliders feel instant
-  const [localBgType,     setLocalBgType]     = useState(storeBgType);
-  const [localStops,      setLocalStops]      = useState(storeStops);
-  const [localHue,        setLocalHue]        = useState(storeHue);
-  const [localTint,       setLocalTint]       = useState(storeTint);
-  const [localBrightness, setLocalBrightness] = useState(storeBrightness);
-
-  const hue        = localHue;
-  const tint       = localTint;
-  const brightness = localBrightness;
-
-  // Ref holds latest values without causing re-renders — read inside RAF callback
-  const bgValuesRef = useRef({ type: storeBgType, stops: storeStops, hue: storeHue, tint: storeTint, brightness: storeBrightness });
-  const rafRef      = useRef(0);
-
-  const flushUpdate = useCallback(() => {
-    if (rafRef.current) { clearTimeout(rafRef.current); rafRef.current = 0; }
-    const { type: t, stops: st, hue: h, tint: ti, brightness: br } = bgValuesRef.current;
-    if (t === 'custom') {
-      updateBackground({ type: 'gradient', bgType: 'custom', stops: st, angle: 90 });
-    } else {
-      updateBackground({ type: 'gradient', bgType: 'preset', hue: h, tint: ti, brightness: br, colors: bgColorsFromHueTint(h, ti, br), angle: 90 });
-    }
-  }, []);
-
-  // Throttle at ~30fps: frequent enough to feel fluid, spaced enough for WebGL to finish
-  const scheduleUpdate = useCallback(() => {
-    if (rafRef.current) return; // already scheduled, latest values in ref
-    rafRef.current = window.setTimeout(() => {
-      rafRef.current = 0;
-      const { type: t, stops: st, hue: h, tint: ti, brightness: br } = bgValuesRef.current;
-      if (t === 'custom') {
-        updateBackground({ type: 'gradient', bgType: 'custom', stops: st, angle: 90 });
-      } else {
-        updateBackground({ type: 'gradient', bgType: 'preset', hue: h, tint: ti, brightness: br, colors: bgColorsFromHueTint(h, ti, br), angle: 90 });
-      }
-    }, 33);
-  }, []);
-
-  // useState initializer only runs once; if persistence loads after mount the
-  // local values would be stale. Re-sync every time the picker is opened.
-  useEffect(() => {
-    if (!showBgPicker) return;
-    setLocalBgType(storeBgType);
-    setLocalStops(storeStops);
-    setLocalHue(storeHue);
-    setLocalTint(storeTint);
-    setLocalBrightness(storeBrightness);
-    bgValuesRef.current = {
-      type: storeBgType,
-      stops: storeStops,
-      hue: storeHue,
-      tint: storeTint,
-      brightness: storeBrightness,
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showBgPicker]); // only on open/close, not on every store change
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!showBgPicker && !showZoomMenu && !showLightMenu) return;
+    if (!showBgPicker && !showZoomMenu && !showLightMenu && !showExportMenu) return;
     const handle = (e: MouseEvent) => {
       if (showBgPicker  && bgPickerRef.current  && !bgPickerRef.current.contains(e.target as Node))
         setShowBgPicker(false);
@@ -214,10 +55,17 @@ export function TopToolbar() {
         setShowZoomMenu(false);
       if (showLightMenu && lightMenuRef.current && !lightMenuRef.current.contains(e.target as Node))
         setShowLightMenu(false);
+      if (showExportMenu && exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node))
+        setShowExportMenu(false);
     };
     document.addEventListener('mousedown', handle);
     return () => document.removeEventListener('mousedown', handle);
-  }, [showBgPicker, showZoomMenu, showLightMenu]);
+  }, [showBgPicker, showZoomMenu, showLightMenu, showExportMenu]);
+
+  const exportAs = (detail: ExportOptions) => {
+    window.dispatchEvent(new CustomEvent<ExportOptions>('icon-export', { detail }));
+    setShowExportMenu(false);
+  };
 
   const commitName = () => { setIconName(nameInput); setEditingName(false); };
   const cancelName = () => setEditingName(false);
@@ -289,64 +137,13 @@ export function TopToolbar() {
     document.addEventListener('mouseup', onUp);
   }, []);
 
-  const handleHueChange = (h: number) => {
-    setLocalHue(h);
-    bgValuesRef.current.hue = h;
-    scheduleUpdate();
-  };
-  const handleTintChange = (t: number) => {
-    setLocalTint(t);
-    bgValuesRef.current.tint = t;
-    scheduleUpdate();
-  };
-  const handleBrightnessChange = (bv: number) => {
-    setLocalBrightness(bv);
-    bgValuesRef.current.brightness = bv;
-    scheduleUpdate();
-  };
-
-  const handleCustomColor = (hex: string) => {
-    if (localBgType === 'preset') {
-      const { h, s, l } = hexToHSL(hex);
-      const newTint = Math.round(Math.min(100, Math.max(0, (1 - s / 85) * 100)));
-      const l1base = 48 + newTint * 0.52;
-      const newBrightness = Math.round(Math.min(100, Math.max(0, (l * 100) / l1base)));
-      setLocalHue(h);
-      setLocalTint(newTint);
-      setLocalBrightness(newBrightness);
-      bgValuesRef.current = { ...bgValuesRef.current, type: 'preset', hue: h, tint: newTint, brightness: newBrightness };
-    } else {
-      const newStops = [...localStops];
-      newStops[0] = { ...newStops[0], color: hex };
-      setLocalStops(newStops);
-      bgValuesRef.current = { ...bgValuesRef.current, type: 'custom', stops: newStops };
-    }
-    scheduleUpdate();
-  };
-
-  const handleStopChange = (index: number, hex: string) => {
-    const newStops = [...localStops];
-    newStops[index] = { ...newStops[index], color: hex };
-    setLocalStops(newStops);
-    bgValuesRef.current = { ...bgValuesRef.current, type: 'custom', stops: newStops };
-    scheduleUpdate();
-  };
-
-  const sat         = Math.round(85 * (1 - tint / 100));
-  const l1cur       = Math.min(100, Math.round((48 + tint * 0.52) * brightness / 100));
-  const hueTrack    = [0,30,60,90,120,150,180,210,240,270,300,330,360].map((h) => `hsl(${h},100%,50%)`).join(', ');
-  const tintTrack   = `linear-gradient(to right, hsl(${hue},85%,${Math.round(48 * brightness / 100)}%), hsl(${hue},0%,${Math.min(100, Math.round(100 * brightness / 100))}%))`;
-  const brightTrack = `linear-gradient(to right, #000, hsl(${hue},${sat}%,${Math.min(100, Math.round(48 + tint * 0.52))}%))`;
-  const currentHue  = `hsl(${hue},100%,50%)`;
-  const currentTint = `hsl(${hue},${sat}%,${l1cur}%)`;
-  const currentBright = `hsl(${hue},${sat}%,${l1cur}%)`;
-  const bgPreview       = localBgType === 'custom' && localStops.length > 0 
-    ? `linear-gradient(135deg, ${localStops.map(s => s.color).join(', ')})`
-    : `linear-gradient(135deg, ${bgColorsFromHueTint(hue, tint, brightness).join(', ')})`;
+  const bgPreview = bg.bgType === 'custom' && bg.stops?.length
+    ? `linear-gradient(135deg, ${bg.stops.map(s => s.color).join(', ')})`
+    : `linear-gradient(135deg, ${bgColorsFromHueTint(bg.hue ?? 220, bg.tint ?? 20, bg.brightness ?? 100).join(', ')})`;
 
   return (
     <div
-      className="flex items-center h-11 px-3 select-none relative z-20"
+      className="flex items-center h-11 pl-3 pr-2 select-none relative z-20"
       style={{
         background: 'rgba(13,13,16,0.85)',
         backdropFilter: 'blur(32px) saturate(200%)',
@@ -363,7 +160,7 @@ export function TopToolbar() {
             onChange={(e) => setNameInput(e.target.value)}
             onBlur={commitName}
             onKeyDown={(e) => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') cancelName(); }}
-            className="text-[11px] font-medium rounded-[6px] px-2 py-0.5 focus:outline-none w-32"
+            className="text-[11px] font-medium rounded-[6px] px-2 py-0.5 focus:outline-hidden w-32"
             style={{ background: 'rgba(255,255,255,0.08)', border: '0.5px solid rgba(10,132,255,0.8)', color: '#ffffff' }}
           />
         ) : (
@@ -377,7 +174,7 @@ export function TopToolbar() {
           </button>
         )}
         {modified && (
-          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.30)' }} title="Unsaved changes" />
+          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'rgba(255,255,255,0.30)' }} title="Unsaved changes" />
         )}
       </div>
 
@@ -391,7 +188,7 @@ export function TopToolbar() {
             title="Background color"
           >
             <div
-              className="w-[18px] h-[18px] rounded-[5px] flex-shrink-0"
+              className="w-[18px] h-[18px] rounded-[5px] shrink-0"
               style={{ background: bgPreview, boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.15)' }}
             />
             <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.50)' }}>Background</span>
@@ -409,149 +206,7 @@ export function TopToolbar() {
                 boxShadow: '0 8px 40px rgba(0,0,0,0.6), inset 0 0.5px 0 rgba(255,255,255,0.08)',
               }}
             >
-              <div className="flex border-b border-white/[0.06]">
-                <button
-                  className={`flex-1 text-[11px] font-semibold py-2.5 transition-all ${
-                    localBgType === 'preset'
-                      ? 'text-white border-b-2 border-[#0a84ff]'
-                      : 'text-white/35 hover:text-white/60'
-                  }`}
-                  style={{ marginBottom: localBgType === 'preset' ? -1 : 0 }}
-                  onClick={() => {
-                    setLocalBgType('preset');
-                    bgValuesRef.current = { ...bgValuesRef.current, type: 'preset' };
-                    scheduleUpdate();
-                  }}
-                >
-                  Solid
-                </button>
-                <button
-                  className={`flex-1 text-[11px] font-semibold py-2.5 transition-all ${
-                    localBgType === 'custom'
-                      ? 'text-white border-b-2 border-[#0a84ff]'
-                      : 'text-white/35 hover:text-white/60'
-                  }`}
-                  style={{ marginBottom: localBgType === 'custom' ? -1 : 0 }}
-                  onClick={() => {
-                    setLocalBgType('custom');
-                    bgValuesRef.current = { ...bgValuesRef.current, type: 'custom' };
-                    scheduleUpdate();
-                  }}
-                >
-                  Gradient
-                </button>
-              </div>
-
-              {localBgType === 'preset' ? (
-                <div className="p-4 space-y-4">
-                  {/* Clickable preview → native color picker */}
-                  <div className="relative group">
-                    <div
-                      className="w-full h-9 rounded-[10px] cursor-pointer"
-                      style={{ background: bgPreview, boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.12)' }}
-                      onClick={() => colorInputRef.current?.click()}
-                      title="Click to pick custom color"
-                    />
-                    <div
-                      className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none rounded-[10px]"
-                      style={{ background: 'rgba(0,0,0,0.35)' }}
-                    >
-                      <span className="text-[10px] text-white font-medium">Custom color</span>
-                    </div>
-                    <input
-                      ref={colorInputRef}
-                      type="color"
-                      className="absolute opacity-0 w-0 h-0 pointer-events-none"
-                      onChange={(e) => handleCustomColor(e.target.value)}
-                    />
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.28)' }}>
-                      Presets
-                    </span>
-                    <div className="grid grid-cols-7 gap-1.5 w-full">
-                      {PRESET_COLORS.map(({ hex, label }) => (
-                        <button
-                          key={hex}
-                          title={label}
-                          onClick={() => handleCustomColor(hex)}
-                          className="aspect-square rounded-lg transition-transform hover:scale-110 active:scale-95"
-                          style={{
-                            background: hex,
-                            boxShadow: '0 0 0 0.5px rgba(255,255,255,0.15), 0 1px 4px rgba(0,0,0,0.3)',
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.28)' }}>Hue</span>
-                    <GradientSlider
-                      value={hue} min={0} max={360}
-                      trackGradient={`linear-gradient(to right, ${hueTrack})`}
-                      thumbColor={currentHue}
-                      onChange={handleHueChange}
-                      onRelease={flushUpdate}
-                    />
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.28)' }}>Tint</span>
-                    <GradientSlider
-                      value={tint} min={0} max={100}
-                      trackGradient={tintTrack}
-                      thumbColor={currentTint}
-                      onChange={handleTintChange}
-                      onRelease={flushUpdate}
-                    />
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-semibold uppercase tracking-widest mb-2 block" style={{ color: 'rgba(255,255,255,0.28)' }}>Brightness</span>
-                    <GradientSlider
-                      value={brightness} min={0} max={100}
-                      trackGradient={brightTrack}
-                      thumbColor={currentBright}
-                      onChange={handleBrightnessChange}
-                      onRelease={flushUpdate}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 space-y-3">
-                  <div
-                    className="w-full h-9 rounded-[10px]"
-                    style={{ background: bgPreview, boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.12)' }}
-                  />
-
-                  <div className="space-y-2">
-                    {[0, 1].map((i) => {
-                      const stop = localStops[i] ?? { offset: i, color: i === 0 ? '#2a2a2e' : '#1a1a1e' };
-                      return (
-                        <div key={i} className="flex items-center gap-2 w-full">
-                          <div className="relative w-7 h-7 shrink-0 rounded-[6px] overflow-hidden" style={{ boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.15)' }}>
-                            <input
-                              type="color"
-                              value={stop.color}
-                              onChange={(e) => handleStopChange(i, e.target.value)}
-                              className="absolute -inset-2 w-12 h-10 cursor-pointer border-0 p-0"
-                            />
-                            <div className="absolute inset-0 pointer-events-none" style={{ background: stop.color }} />
-                          </div>
-                          <input
-                            type="text"
-                            value={stop.color.toUpperCase()}
-                            onChange={(e) => handleStopChange(i, e.target.value)}
-                            className="flex-1 min-w-0 text-xs bg-[#1a1a1c] border border-white/[0.08] rounded-[6px] px-2 py-1.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff] font-mono"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <BackgroundControls />
             </div>
           )}
         </div>
@@ -567,7 +222,7 @@ export function TopToolbar() {
             <Sun
               size={16}
               weight="bold"
-              className="flex-shrink-0 cursor-ew-resize"
+              className="shrink-0 cursor-ew-resize"
               style={{ color: 'rgba(255,255,255,0.40)' }}
               onMouseDown={(e: React.MouseEvent) => { e.stopPropagation(); handleLightIconMouseDown(e); }}
               aria-label="Drag to step light angle"
@@ -615,7 +270,7 @@ export function TopToolbar() {
             <MagnifyingGlass
               size={16}
               weight="bold"
-              className="flex-shrink-0 cursor-ew-resize"
+              className="shrink-0 cursor-ew-resize"
               style={{ color: 'rgba(255,255,255,0.40)' }}
               onMouseDown={(e: React.MouseEvent) => { e.stopPropagation(); handleZoomIconMouseDown(e); }}
               aria-label="Drag to step zoom"
@@ -654,55 +309,62 @@ export function TopToolbar() {
       </div>
 
       <div className="flex items-center gap-2 min-w-[160px] justify-end">
-        <div className="relative group flex items-center">
-          <span
-            className="w-2 h-2 rounded-full"
-            title={webglPopoverText}
-            style={{
-              background:
-                webgl2Status === 'active'
-                  ? '#34C759'
-                  : webgl2Status === 'error'
-                    ? '#FF453A'
-                    : 'rgba(255,255,255,0.20)',
-              boxShadow:
-                webgl2Status === 'active'
-                  ? '0 0 6px rgba(52,199,89,0.8)'
-                  : webgl2Status === 'error'
-                    ? '0 0 6px rgba(255,69,58,0.7)'
-                    : 'none',
-            }}
-          />
+        <div ref={exportMenuRef} className="relative">
           <div
-            className="absolute right-full mr-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+            className="flex items-stretch rounded-full overflow-hidden transition-transform duration-150 active:scale-[0.97]"
             style={{
-              background: 'rgba(30,30,32,0.95)',
-              border: '0.5px solid rgba(255,255,255,0.10)',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.08)',
-              backdropFilter: 'blur(24px) saturate(180%)',
-              WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-              color: 'rgba(255,255,255,0.85)',
-              fontSize: '10px',
-              lineHeight: '14px',
-              padding: '6px 8px',
-              borderRadius: '8px',
-              whiteSpace: 'nowrap',
+              background: 'rgba(10,132,255,0.88)',
+              color: '#ffffff',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.30), inset 0 0.5px 0 rgba(255,255,255,0.35)',
             }}
           >
-            {webglPopoverText}
+            <button
+              onClick={() => exportAs(DEFAULT_EXPORT)}
+              className="pl-4 pr-3 py-[6px] text-[11px] font-semibold tracking-tight"
+            >
+              Export
+            </button>
+            <div className="w-px my-[6px]" style={{ background: 'rgba(255,255,255,0.22)' }} />
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              aria-label="More export options"
+              aria-haspopup="menu"
+              aria-expanded={showExportMenu}
+              className="pl-2 pr-2.5 flex items-center"
+            >
+              <CaretDown size={9} weight="bold" />
+            </button>
           </div>
+
+          {showExportMenu && (
+            <div
+              role="menu"
+              className="absolute top-full right-0 mt-2 z-50 py-1.5 rounded-[12px] shadow-xl min-w-[150px]"
+              style={{
+                background: 'rgba(30,30,32,0.95)',
+                backdropFilter: 'blur(40px)',
+                WebkitBackdropFilter: 'blur(40px)',
+                border: '0.5px solid rgba(255,255,255,0.10)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0.5px 0 rgba(255,255,255,0.07)',
+              }}
+            >
+              {EXPORT_OPTIONS.map((opt) => (
+                <button
+                  key={`${opt.format}-${opt.size}`}
+                  role="menuitem"
+                  onClick={() => exportAs(opt)}
+                  className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors flex items-center justify-between gap-3"
+                  style={{ color: 'rgba(255,255,255,0.65)' }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)')}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+                >
+                  <span>{FORMAT_LABEL[opt.format]}{opt.size === 4096 ? ' · 4K' : opt.size === 2048 ? ' · 2K' : ''}</span>
+                  <span className="tabular-nums" style={{ color: 'rgba(255,255,255,0.30)' }}>({opt.size} px)</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        <button
-          onClick={() => window.dispatchEvent(new CustomEvent('icon-export'))}
-          className="px-3.5 py-[5px] text-[11px] font-semibold rounded-[8px] transition-all duration-150"
-          style={{
-            background: 'linear-gradient(180deg, rgba(10,132,255,1) 0%, rgba(0,102,220,1) 100%)',
-            color: '#ffffff',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.4), inset 0 0.5px 0 rgba(255,255,255,0.25)',
-          }}
-        >
-          Export
-        </button>
       </div>
     </div>
   );

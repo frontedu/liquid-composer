@@ -1,8 +1,8 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { useStore } from '@nanostores/react';
 import { $layers, $background, addLayer, updateLayer } from '../../store/iconStore';
-import { $appearanceMode, $lightAngle, $zoom, $selectedLayerId, $hoveredLayerId, selectLayer, stepZoom } from '../../store/uiStore';
-import { renderIconToCanvas, exportIconPNG } from '../../engine/IconRenderer';
+import { $appearanceMode, $lightAngle, $zoom, $selectedLayerId, $hoveredLayerId, $webgl2Status, $webgl2Error, selectLayer, stepZoom } from '../../store/uiStore';
+import { renderIconToCanvas, exportIcon, type ExportOptions } from '../../engine/IconRenderer';
 import { drawSquirclePath } from '../../engine/ImageProcessor';
 import { BottomBar } from '../layout/BottomBar';
 
@@ -178,6 +178,8 @@ export function IconCanvas() {
   const zoom = useStore($zoom);
   const selectedLayerId = useStore($selectedLayerId);
   const hoveredLayerId = useStore($hoveredLayerId);
+  const webgl2Status = useStore($webgl2Status);
+  const webgl2Error = useStore($webgl2Error);
   const [showSafeArea, setShowSafeArea] = useState(false);
   const [snapGuide, setSnapGuide] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
   const { over, handleDragOver, handleDragLeave, handleDrop } = useDragDrop();
@@ -194,9 +196,6 @@ export function IconCanvas() {
   } | null>(null);
 
   const iconSize = Math.round(ICON_BASE_SIZE * (zoom / 100));
-  // Render size is fixed relative to ICON_BASE_SIZE × DPR — never scales with zoom.
-  // Zoom is purely CSS (the canvas is scaled via width/height style). This keeps
-  // render cost constant at all zoom levels.
   const dpr = typeof window !== 'undefined' ? Math.max(2, Math.min(window.devicePixelRatio || 1, 3)) : 2;
   const renderSize = Math.max(1024, Math.min(2048, Math.round(ICON_BASE_SIZE * dpr)));
 
@@ -212,9 +211,8 @@ export function IconCanvas() {
 
     const run = () => {
       renderingRef.current = true;
-      renderIconToCanvas(canvas, params).then(() => {
+      renderIconToCanvas(canvas, params).catch(console.error).then(() => {
         renderingRef.current = false;
-        // If a newer render was queued while we were busy, run it now
         if (pendingRef.current) {
           const next = pendingRef.current;
           pendingRef.current = null;
@@ -224,7 +222,6 @@ export function IconCanvas() {
     };
 
     if (renderingRef.current) {
-      // Already rendering — store only the latest request, drop intermediate ones
       pendingRef.current = run;
     } else {
       pendingRef.current = null;
@@ -243,18 +240,22 @@ export function IconCanvas() {
   }, []);
 
   useEffect(() => {
-    const handler = async () => {
-      const dataUrl = await exportIconPNG(layers, background, lightAngle, mode, 1024);
+    const handler = async (e: Event) => {
+      const options = (e as CustomEvent<ExportOptions | null>).detail ?? { format: 'png', size: 1024 };
+      const blob = await exportIcon(layers, background, lightAngle, mode, options).catch((err: unknown) => { console.error(err); return null; });
+      if (!blob) return;
+      const ext = blob.type.replace('image/', '').replace('jpeg', 'jpg');
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = 'icon-1024.png';
+      a.href = url;
+      a.download = `icon-${options.size}.${ext}`;
       a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
     window.addEventListener('icon-export', handler);
     return () => window.removeEventListener('icon-export', handler);
   }, [layers, background, lightAngle, mode]);
 
-  // Hit-test a point against a layer's blobUrl by sampling alpha on a tiny offscreen canvas
   const hitTestLayer = useCallback(async (layer: { blobUrl?: string; layout: { x: number; y: number; scale: number } }, nx: number, ny: number): Promise<boolean> => {
     if (!layer.blobUrl) return false;
     return new Promise((resolve) => {
@@ -292,13 +293,11 @@ export function IconCanvas() {
     const ny = (e.clientY - rect.top) / iconSize;
     const target = e.currentTarget as HTMLDivElement;
 
-    // Fast path: if already selected layer is under cursor, arm drag immediately (sync)
     const alreadySelected = selectedLayerId
       ? layers.find(l => l.id === selectedLayerId && l.visible && l.type !== 'group' && l.blobUrl)
       : null;
 
     if (alreadySelected) {
-      // Quick optimistic arm — verify alpha async but don't block drag start
       dragState.current = {
         layerId: alreadySelected.id,
         startX: e.clientX,
@@ -351,9 +350,9 @@ export function IconCanvas() {
   const hoverRafRef = useRef(0);
   const iconAreaRef = useRef<HTMLDivElement>(null);
   const handleCanvasPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragState.current && !(e.buttons & 1)) dragState.current = null;
     if (!dragState.current) {
       if (hoverRafRef.current) return; // already pending
-      // Capture coordinates synchronously before React recycles the event
       const clientX = e.clientX;
       const clientY = e.clientY;
       hoverRafRef.current = requestAnimationFrame(async () => {
@@ -392,7 +391,6 @@ export function IconCanvas() {
     ds.pendingX = newX;
     ds.pendingY = newY;
 
-    // Real-time outline position — direct DOM update, no React reconciliation
     if (outlineImgRef.current) {
       const layer = layers.find(l => l.id === ds.layerId);
       const scale = layer?.layout.scale ?? 100;
@@ -404,9 +402,9 @@ export function IconCanvas() {
       ds.rafId = requestAnimationFrame(() => {
         ds.rafId = 0;
         if (!dragState.current) return;
-        updateLayer(dragState.current.layerId, {
-          layout: { ...layers.find((l) => l.id === dragState.current!.layerId)!.layout, x: dragState.current.pendingX, y: dragState.current.pendingY },
-        });
+        const dragged = layers.find((l) => l.id === dragState.current!.layerId);
+        if (!dragged) return;
+        updateLayer(dragged.id, { layout: { ...dragged.layout, x: dragState.current.pendingX, y: dragState.current.pendingY } });
       });
     }
   }, [layers, iconSize]);
@@ -418,7 +416,6 @@ export function IconCanvas() {
 
   const bgStyle = (() => {
     if (mode === 'clear') {
-      // Dark checkered pattern (same as layer thumbnails) signals transparency
       return {
         backgroundColor: '#1e1e1e',
         backgroundImage: [
@@ -441,13 +438,20 @@ export function IconCanvas() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       onPointerDown={(e) => {
-        // Deselect when clicking outside the icon area (clicks on the icon div are handled separately)
         if (e.target === e.currentTarget || !(e.target as HTMLElement).closest('[data-icon-area]')) {
           selectLayer(null);
         }
       }}
     >
       <div className="absolute inset-0 transition-colors duration-500" style={bgStyle} />
+      {webgl2Status === 'error' && (
+        <div
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 rounded-[8px] text-[11px] text-[#ebebf5]"
+          style={{ background: 'rgba(255,69,58,0.18)', border: '0.5px solid rgba(255,69,58,0.45)' }}
+        >
+          WebGL2 unavailable: {webgl2Error || 'unknown error'}. Liquid Glass renders without refraction.
+        </div>
+      )}
 
       <div
         className="absolute inset-0 opacity-[0.04]"
@@ -470,8 +474,6 @@ export function IconCanvas() {
         <div className="absolute pointer-events-none z-30" style={{ top: '50%', left: 0, height: 1, width: '100%', background: 'rgba(255,59,48,0.7)', transform: 'translateY(-0.5px)' }} />
       )}
 
-      {/* Outer container sized to iconSize; canvas always renders at ICON_BASE_SIZE
-          and is scaled via CSS so borders/effects stay proportional at all zoom levels. */}
       <div
         ref={iconAreaRef}
         data-icon-area
@@ -498,7 +500,6 @@ export function IconCanvas() {
         />
         {showSafeArea && <SafeAreaOverlay size={iconSize} />}
 
-        {/* Selection/hover outline — SVG filter dilates alpha to create a blue ring */}
         {(() => {
           const outlineId = hoveredLayerId ?? selectedLayerId;
           const outlineLayer = outlineId ? layers.find((l) => l.id === outlineId) : null;
@@ -509,13 +510,9 @@ export function IconCanvas() {
               <svg style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}>
                 <defs>
                   <filter id="layer-outline-selected" x="-10%" y="-10%" width="120%" height="120%">
-                    {/* Dilate alpha outward to form outer ring boundary */}
                     <feMorphology operator="dilate" radius="7" in="SourceAlpha" result="outer" />
-                    {/* Inner boundary — gap between outline and shape */}
                     <feMorphology operator="dilate" radius="2" in="SourceAlpha" result="inner" />
-                    {/* Subtract inner from outer → thin ring */}
                     <feComposite in="outer" in2="inner" operator="out" result="ring" />
-                    {/* Color the ring blue */}
                     <feFlood floodColor="#0a84ff" floodOpacity="1" result="color" />
                     <feComposite in="color" in2="ring" operator="in" />
                   </filter>
@@ -552,7 +549,7 @@ export function IconCanvas() {
 
       <BottomBar />
 
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/30 backdrop-blur-sm rounded-full px-3 py-1">
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/30 backdrop-blur-xs rounded-full px-3 py-1">
         <button
           onClick={() => setShowSafeArea((s) => !s)}
           title="Toggle safe area guide (Apple HIG 70%)"

@@ -1,5 +1,3 @@
-import React from 'react';
-
 interface SelectOption {
   value: string;
   label: string;
@@ -11,17 +9,19 @@ interface SelectProps {
   options: SelectOption[];
   disabled?: boolean;
   className?: string;
+  ariaLabel?: string;
 }
 
-export function Select({ value, onChange, options, disabled, className = '' }: SelectProps) {
+export function Select({ value, onChange, options, disabled, className = '', ariaLabel }: SelectProps) {
   return (
     <div className={`relative ${className}`}>
       <select
+        aria-label={ariaLabel}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
         className={`w-full appearance-none text-xs bg-white/[0.06] border border-white/[0.08] rounded-md px-2 py-1
-          text-[#ebebf5] focus:outline-none focus:border-[#0a84ff] pr-6
+          text-[#ebebf5] focus:outline-hidden focus:border-[#0a84ff] pr-6
           ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
       >
         {options.map((opt) => (

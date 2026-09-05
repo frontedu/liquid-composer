@@ -1,18 +1,26 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  --font-system: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --text-2xs: 10px;
+  --text-2xs--line-height: 1.2;
+  --text-xs: 11px;
+  --text-xs--line-height: normal;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 :root {
+  color-scheme: dark;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 html, body {
@@ -22,13 +30,11 @@ html, body {
   color: #ebebf5;
 }
 
-/* Thin macOS-style scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.30); }
 
-/* Reset browser-native range appearance before styling the thumb */
 input[type='range'] { -webkit-appearance: none; appearance: none; }
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -39,17 +45,15 @@ input[type='range']::-webkit-slider-thumb {
   border: 1.5px solid rgba(255, 255, 255, 0.2);
 }
 
-/* Hide browser spin buttons on number inputs */
 input[type='number']::-webkit-inner-spin-button,
 input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; }
 input[type='number'] { -moz-appearance: textfield; }
 
+option { background: #1c1c1e; color: #ebebf5; }
+
 input[type='color'] { -webkit-appearance: none; border: none; padding: 0; border-radius: 3px; cursor: pointer; }
 input[type='color']::-webkit-color-swatch-wrapper { padding: 0; }
 input[type='color']::-webkit-color-swatch { border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 3px; }
-
-/* Non-standard size not in Tailwind's default scale */
-.text-2xs { font-size: 10px; line-height: 1.2; }
 
 .glass-panel {
   background: rgba(28, 28, 30, 0.88);
@@ -59,4 +63,132 @@ input[type='color']::-webkit-color-swatch { border: 1px solid rgba(255, 255, 255
 }
 
 ::selection { background: rgba(10, 132, 255, 0.3); }
+
+.glass-settings { color: #f2f2f7; }
+.glass-setting-group {
+  background: #1c1c20;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 2px 5px rgba(0, 0, 0, 0.12);
+}
+.glass-setting-row { padding: 7px 12px; }
+.glass-setting-row + .glass-setting-row { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.glass-setting-caption { color: #a1a1aa; font-size: 11px; line-height: 1.5; }
+.glass-segments {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: #242428;
+}
+.glass-segments button {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #b6b6bf;
+}
+.glass-segments button[aria-pressed='true'] {
+  background: #48484e;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.glass-advanced-header { display: flex; align-items: center; gap: 10px; }
+.glass-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #28282d;
+  color: #64a8ff;
+}
+.glass-reset:disabled { opacity: 0.35; }
+.glass-group-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.glass-group-summary::-webkit-details-marker { display: none; }
+.glass-group-summary svg { color: #a1a1aa; transform: rotate(-90deg); }
+details[open] > .glass-group-summary svg { transform: rotate(0); }
+.glass-group-controls { padding: 0 12px 10px; }
+.glass-group-controls > .glass-slider { border-top: 1px solid rgba(255, 255, 255, 0.06); margin-top: 10px; padding-top: 10px; }
+.glass-slider { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; }
+.glass-slider > label { width: auto; color: #d1d1d6; line-height: 1.4; }
+.glass-slider-value {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: #303037;
+}
+.glass-slider-value input { width: 48px; min-height: 24px; padding: 0; border: 0; background: transparent; font-variant-numeric: tabular-nums; color: #f2f2f7; }
+.glass-slider-value span { color: #b6b6bf; width: auto; font-size: 10px; }
+.glass-slider-value:focus-within { outline: 2px solid #64a8ff; outline-offset: 2px; }
+.glass-slider > .glass-slider-track { grid-column: 1 / -1; grid-row: 2; height: 32px; }
+.glass-slider > .glass-slider-track > div:first-child,
+.glass-slider > .glass-slider-track > div:first-child > div { height: 5px; }
+.glass-slider > .glass-slider-track > div:nth-child(2) { width: 18px; height: 18px; }
+.glass-slider-track:has(input:focus-visible) { outline: 2px solid #64a8ff; outline-offset: 2px; border-radius: 6px; }
+.glass-settings button:focus-visible, .glass-group-summary:focus-visible { outline: 2px solid #64a8ff; outline-offset: 2px; }
+.glass-settings .glass-toggle { min-height: 30px; }
+.glass-settings .glass-toggle > span:first-child { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+.inspector-panel .glass-toggle[aria-checked='true'] > span:first-child { background: #34c759; }
+@media (prefers-reduced-motion: reduce) {
+  .glass-settings *, .glass-toggle span { transition: none; }
+}
+@media (prefers-contrast: more) {
+  .glass-setting-group { border-color: #8e8e93; }
+  .glass-setting-caption { color: #d1d1d6; }
+}
+
+.inspector-panel { --inspector-control-height: 30px; --text-xs: 12px; --text-xs--line-height: 1.4; }
+.inspector-panel input:is([type='text'], [type='number']), .inspector-panel select {
+  height: var(--inspector-control-height);
+  min-height: var(--inspector-control-height);
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  background: #28282e;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.inspector-panel select { padding-right: 26px; }
+.inspector-panel input[type='color'] { width: 30px; height: var(--inspector-control-height); border-radius: 7px; }
+.inspector-panel .glass-slider-value, .inspector-panel .inspector-number-field {
+  height: var(--inspector-control-height);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  background: #28282e;
+}
+.inspector-panel .glass-slider-value { min-width: 68px; padding: 0 7px; gap: 3px; }
+.inspector-panel .inspector-number-field { width: 100%; min-width: 0; }
+.inspector-panel .glass-slider-value input, .inspector-panel .inspector-number-field input {
+  height: calc(var(--inspector-control-height) - 2px);
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.inspector-panel .glass-slider-value input { padding: 0; }
+.inspector-panel .inspector-number-field input { flex: 1; width: 0; min-width: 0; text-align: left; font-variant-numeric: tabular-nums; }
+.inspector-panel .inspector-number-field > span { padding-right: 10px; color: #a1a1aa; }
+.inspector-panel .inspector-number-field:focus-within { outline: 2px solid #64a8ff; outline-offset: 2px; }
+.inspector-panel input:is([type='text'], [type='number']):focus-visible, .inspector-panel select:focus-visible { border-color: #64a8ff; }
+.inspector-panel .glass-segments button, .inspector-panel .glass-toggle { min-height: var(--inspector-control-height); }
 :focus-visible { outline: 2px solid #0a84ff; outline-offset: 1px; }

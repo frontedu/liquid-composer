@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type DragEvent as ReactDragEvent } from 'react';
 import { useStore } from '@nanostores/react';
 import { $selectedLayerId, $hoveredLayerId, selectLayer } from '../../store/uiStore';
 import { removeLayer, toggleLayerVisibility, toggleGroupCollapsed, updateLayer } from '../../store/iconStore';
@@ -10,10 +10,11 @@ interface LayerItemProps {
   depth?: number;
   isDragging?: boolean;
   isInsideTarget?: boolean;
+  dropEdge?: 'before' | 'after' | null;
   onDragStart?: (id: string) => void;
   onDragEnd?: () => void;
-  onDragOver?: () => void;
-  onDrop?: () => void;
+  onDragOver?: (e: ReactDragEvent<HTMLDivElement>) => void;
+  onDrop?: (e: ReactDragEvent<HTMLDivElement>) => void;
 }
 
 export function LayerItem({
@@ -21,6 +22,7 @@ export function LayerItem({
   depth = 0,
   isDragging = false,
   isInsideTarget = false,
+  dropEdge = null,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -51,35 +53,41 @@ export function LayerItem({
   return (
     <div
       draggable={!editing}
-      onDragStart={(e) => { e.stopPropagation(); onDragStart?.(layer.id); }}
+      onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData('text/plain', layer.id); e.dataTransfer.effectAllowed = 'move'; onDragStart?.(layer.id); }}
       onDragEnd={(e) => { e.stopPropagation(); onDragEnd?.(); }}
-      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); onDragOver?.(); }}
-      onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onDrop?.(); }}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; onDragOver?.(e); }}
+      onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onDrop?.(e); }}
       onMouseEnter={() => $hoveredLayerId.set(layer.id)}
       onMouseLeave={() => $hoveredLayerId.set(null)}
       onClick={() => !editing && selectLayer(layer.id)}
       style={{ paddingLeft: `${(depth + 1) * 12}px`, opacity: isDragging ? 0.35 : 1 }}
-      className={`flex items-center gap-2 py-1.5 pr-2 cursor-pointer select-none group transition-colors
+      className={`relative flex items-center gap-2 py-1 mx-1 pr-2 rounded-[6px] cursor-pointer select-none group transition-colors
         ${isSelected
-          ? 'bg-[#0a84ff]/40 text-white'
+          ? 'bg-[#0a84ff]/65 text-white'
           : isInsideTarget
           ? 'bg-[#0a84ff]/15 outline outline-1 outline-[#0a84ff]/50 text-[#ebebf5]'
           : 'text-[#ebebf5] hover:bg-white/[0.06]'}`}
     >
+      {dropEdge && (
+        <div
+          className="absolute right-1 h-0.5 rounded-full bg-[#0a84ff] pointer-events-none"
+          style={{ left: `${(depth + 1) * 12 + 4}px`, ...(dropEdge === 'before' ? { top: -1 } : { bottom: -1 }) }}
+        />
+      )}
       {isGroup ? (
         <button
           onClick={(e) => { e.stopPropagation(); toggleGroupCollapsed(layer.id); }}
-          className={`w-4 h-4 flex items-center justify-center flex-shrink-0 transition-transform
+          className={`w-4 h-4 flex items-center justify-center shrink-0 transition-transform
             ${layer.collapsed ? '' : 'rotate-90'}`}
         >
           <CaretRight size={14} weight="bold" className="opacity-60" />
         </button>
       ) : (
-        <div className="w-4 h-4 flex-shrink-0" />
+        <div className="w-4 h-4 shrink-0" />
       )}
 
       <div
-        className="w-9 h-9 rounded-[5px] flex-shrink-0 overflow-hidden flex items-center justify-center p-1"
+        className="w-9 h-9 rounded-[5px] shrink-0 overflow-hidden flex items-center justify-center p-1"
         style={{
           backgroundImage: isGroup ? undefined :
             'linear-gradient(45deg,#333 25%,transparent 25%),' +
@@ -115,7 +123,7 @@ export function LayerItem({
             e.stopPropagation();
           }}
           onClick={(e) => e.stopPropagation()}
-          className="flex-1 text-xs bg-[#111] border border-[#0a84ff] rounded px-1 py-px focus:outline-none text-[#ebebf5]"
+          className="flex-1 text-xs bg-[#111] border border-[#0a84ff] rounded px-1 py-px focus:outline-hidden text-[#ebebf5]"
         />
       ) : (
         <span

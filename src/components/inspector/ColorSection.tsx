@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { $layers, updateLayer, updateLayerFill } from '../../store/iconStore';
 import { $selectedLayerId } from '../../store/uiStore';
@@ -38,37 +38,41 @@ const FILL_TYPES = [
   { value: 'gradient', label: 'Gradient' },
 ];
 
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+
 export function ColorSection() {
   const selectedId = useStore($selectedLayerId);
   const layers = useStore($layers);
   const layer = layers.find((l) => l.id === selectedId);
 
-  // Local state for performant colour dragging without choking the webGL store
   const [localSolidColor, setLocalSolidColor] = useState<string>('#ffffff');
   const debouncedSolidColor = useDebounce(localSolidColor, 10);
 
   const [localStops, setLocalStops] = useState<{offset: number, color: string}[]>([]);
   const debouncedStops = useDebounce(localStops, 10);
 
-  // Track whether the debounced sync is from user input (not from initialization)
   const skipSolidSync = useRef(true);
   const skipStopsSync = useRef(true);
 
-  // Initialize local state from layer BEFORE paint (prevents white flash on layer switch)
   useLayoutEffect(() => {
     if (layer?.fill.type === 'solid') {
-      skipSolidSync.current = true;
-      setLocalSolidColor(layer.fill.color ?? '#ffffff');
+      const color = layer.fill.color ?? '#ffffff';
+      if (color !== localSolidColor) {
+        skipSolidSync.current = true;
+        setLocalSolidColor(color);
+      }
     } else if (layer?.fill.type === 'gradient' && 'stops' in layer.fill) {
-      skipStopsSync.current = true;
-      setLocalStops(layer.fill.stops as typeof localStops);
+      if (JSON.stringify(layer.fill.stops) !== JSON.stringify(localStops)) {
+        skipStopsSync.current = true;
+        setLocalStops(layer.fill.stops as typeof localStops);
+      }
     }
   }, [layer?.id, layer?.fill.type]);
 
   useEffect(() => {
     if (!layer) return;
     if (skipSolidSync.current) { skipSolidSync.current = false; return; }
-    if (layer.fill.type === 'solid' && debouncedSolidColor !== layer.fill.color) {
+    if (layer.fill.type === 'solid' && debouncedSolidColor !== layer.fill.color && HEX_RE.test(debouncedSolidColor)) {
       updateLayerFill(layer.id, { type: 'solid', color: debouncedSolidColor });
     }
   }, [debouncedSolidColor]);
@@ -76,7 +80,7 @@ export function ColorSection() {
   useEffect(() => {
     if (!layer || layer.fill.type !== 'gradient' || !('stops' in layer.fill)) return;
     if (skipStopsSync.current) { skipStopsSync.current = false; return; }
-    if (debouncedStops.length > 0) {
+    if (debouncedStops.length > 0 && debouncedStops.every((s) => HEX_RE.test(s.color))) {
       updateLayerFill(layer.id, { type: 'gradient', stops: debouncedStops, angle: layer.fill.angle });
     }
   }, [debouncedStops]);
@@ -94,6 +98,7 @@ export function ColorSection() {
 
       <div className="px-3 space-y-3">
         <Slider
+          layout="stacked"
           label="Opacity"
           value={layer.opacity}
           onChange={(v) => updateLayer(layer.id, { opacity: v })}
@@ -104,6 +109,7 @@ export function ColorSection() {
         <div className="flex items-center gap-2">
           <span className="text-xs text-[#636366] w-16 shrink-0">Blend</span>
           <Select
+            ariaLabel="Layer blend mode"
             value={layer.blendMode}
             onChange={(v) => updateLayer(layer.id, { blendMode: v as BlendMode })}
             options={BLEND_MODES}
@@ -115,6 +121,7 @@ export function ColorSection() {
           <div className="flex items-center gap-2">
             <span className="text-xs text-[#636366] w-16 shrink-0">Fill</span>
             <Select
+              ariaLabel="Fill type"
               value={fill.type}
               onChange={(v) => {
                 if (v === 'none') updateLayerFill(layer.id, { type: 'none' });
@@ -143,15 +150,17 @@ export function ColorSection() {
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <input
                   type="color"
+                  aria-label="Fill color"
                   value={localSolidColor}
                   onChange={(e) => setLocalSolidColor(e.target.value)}
                   className="w-7 h-6 shrink-0 rounded cursor-pointer bg-transparent border-0"
                 />
                 <input
                   type="text"
+                  aria-label="Fill hex color"
                   value={localSolidColor}
                   onChange={(e) => setLocalSolidColor(e.target.value)}
-                  className="min-w-0 flex-1 text-xs bg-white/[0.06] border border-white/[0.08] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
+                  className="min-w-0 flex-1 text-xs bg-white/[0.06] border border-white/[0.08] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-hidden focus:border-[#0a84ff]"
                 />
               </div>
             </div>
@@ -169,6 +178,7 @@ export function ColorSection() {
                   <div key={i} className="flex items-center gap-2 min-w-0">
                     <input
                       type="color"
+                      aria-label={`Gradient color ${i + 1}`}
                       value={stop.color}
                       onChange={(e) => {
                         const newStops = [...localStops];
@@ -179,13 +189,14 @@ export function ColorSection() {
                     />
                     <input
                       type="text"
+                      aria-label={`Gradient hex color ${i + 1}`}
                       value={stop.color}
                       onChange={(e) => {
                         const newStops = [...localStops];
                         newStops[i] = { ...newStops[i], color: e.target.value };
                         setLocalStops(newStops);
                       }}
-                      className="flex-1 min-w-0 text-xs bg-white/[0.06] border border-white/[0.08] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
+                      className="flex-1 min-w-0 text-xs bg-white/[0.06] border border-white/[0.08] rounded-md px-1.5 py-0.5 text-[#ebebf5] focus:outline-hidden focus:border-[#0a84ff]"
                     />
                   </div>
                 );

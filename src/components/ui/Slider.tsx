@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useRef, useId } from 'react';
 
 interface SliderProps {
   value: number;
@@ -9,6 +9,8 @@ interface SliderProps {
   label?: string;
   unit?: string;
   disabled?: boolean;
+  layout?: 'inline' | 'stacked';
+  ariaLabel?: string;
 }
 
 export function Slider({
@@ -20,18 +22,20 @@ export function Slider({
   label,
   unit = '%',
   disabled,
+  layout = 'inline',
+  ariaLabel,
 }: SliderProps) {
+  const id = useId();
   const safeValue = isNaN(value) ? min : value;
-  // Local string for the number input — only commit on blur or Enter
   const [inputVal, setInputVal] = useState(String(safeValue));
-  // RAF throttle: update store at most once per animation frame
   const rafRef = useRef<number>(0);
   const pendingVal = useRef<number>(safeValue);
 
-  // Sync from outside (e.g. drag on range input)
   useEffect(() => {
     setInputVal(String(safeValue));
   }, [safeValue]);
+
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
   const commit = useCallback(
     (raw: string) => {
@@ -40,7 +44,7 @@ export function Slider({
         setInputVal(String(safeValue));
         return;
       }
-      const clamped = Math.min(max, Math.max(min, Math.round(parsed / step) * step));
+      const clamped = Math.min(max, Math.max(min, Number((Math.round(parsed / step) * step).toPrecision(12))));
       onChange(clamped);
       setInputVal(String(clamped));
     },
@@ -65,21 +69,24 @@ export function Slider({
   const pct = ((safeValue - min) / (max - min)) * 100;
 
   return (
-    <div className={`flex items-center gap-2 ${disabled ? 'opacity-40' : ''}`}>
-      {label && <span className="text-xs text-[#636366] w-16 shrink-0">{label}</span>}
-      <div className="flex-1 relative h-4 flex items-center">
+    <div className={`${layout === 'stacked' ? 'glass-slider' : 'flex items-center gap-2'} ${disabled ? 'opacity-40' : ''}`}>
+      {label && <label htmlFor={id} className="text-xs text-[#636366] w-16 shrink-0">{label}</label>}
+      <div className="glass-slider-track flex-1 relative h-4 flex items-center">
         <div className="w-full h-1 rounded-full bg-white/[0.12]">
           <div className="h-1 rounded-full bg-[#0a84ff]" style={{ width: `${pct}%` }} />
         </div>
         <div
           className="absolute top-1/2 -translate-y-1/2 w-[13px] h-[13px] rounded-full bg-white pointer-events-none"
           style={{
-            left: `calc(${pct}% - ${(pct / 100) * 13}px)`,
+            left: `calc(${pct}% - ${(pct / 100) * (layout === 'stacked' ? 18 : 13)}px)`,
             boxShadow: '0 1px 3px rgba(0,0,0,0.45), 0 0 0 0.5px rgba(0,0,0,0.12)',
           }}
         />
         <input
+          id={id}
           type="range"
+          aria-label={ariaLabel ?? label}
+          aria-valuetext={`${safeValue}${unit}`}
           min={min}
           max={max}
           step={step}
@@ -89,21 +96,25 @@ export function Slider({
           className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
         />
       </div>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={inputVal}
-        disabled={disabled}
-        onChange={(e) => setInputVal(e.target.value)}
-        onBlur={(e) => commit(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
-        }}
-        className="w-10 text-xs text-right bg-white/[0.06] border border-white/[0.08] rounded px-1 py-0.5 text-[#ebebf5] focus:outline-none focus:border-[#0a84ff]"
-      />
-      {unit && <span className="text-xs text-[#636366] w-3">{unit}</span>}
+      <div className={layout === 'stacked' ? 'glass-slider-value' : 'flex items-center gap-2'}>
+        <input
+          type="number"
+          aria-label={`${ariaLabel ?? label ?? 'Slider'} value`}
+          min={min}
+          max={max}
+          step={step}
+          value={inputVal}
+          disabled={disabled}
+          onChange={(e) => setInputVal(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
+            if (e.key === 'Escape') setInputVal(String(safeValue));
+          }}
+          className="w-10 text-xs text-right bg-white/[0.06] border border-white/[0.08] rounded px-1 py-0.5 text-[#ebebf5] focus:outline-hidden focus:border-[#0a84ff]"
+        />
+        {unit && <span className="text-xs text-[#636366] w-3">{unit}</span>}
+      </div>
     </div>
   );
 }
