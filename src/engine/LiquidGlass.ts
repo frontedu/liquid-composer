@@ -73,10 +73,10 @@ function makeFBO(gl: WebGL2RenderingContext, tex: WebGLTexture): WebGLFramebuffe
   return fbo;
 }
 
-function uploadSourceTexture(gl: WebGL2RenderingContext, tex: WebGLTexture, source: TexImageSource) {
+function uploadSourceTexture(gl: WebGL2RenderingContext, tex: WebGLTexture, source: TexImageSource, mipmaps = true) {
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source);
-  gl.generateMipmap(gl.TEXTURE_2D);
+  if (mipmaps) gl.generateMipmap(gl.TEXTURE_2D);
 }
 
 function drawFullscreenQuad(gl: WebGL2RenderingContext, vao: WebGLVertexArrayObject) {
@@ -92,6 +92,7 @@ interface UniformCache {
   blur_uHorizontal: WebGLUniformLocation | null;
   blur_uSaturate: WebGLUniformLocation | null;
   glass_uLayerTex: WebGLUniformLocation | null;
+  glass_uLightingTex: WebGLUniformLocation | null;
   glass_uBlurredBgTex: WebGLUniformLocation | null;
   glass_uOrigBgTex: WebGLUniformLocation | null;
   glass_uParams1: WebGLUniformLocation | null;
@@ -118,6 +119,7 @@ export class LiquidGlassRenderer {
   private fboB: WebGLFramebuffer;
 
   private layerTex: WebGLTexture;
+  private lightingTex: WebGLTexture;
   private origBgTex: WebGLTexture;
   private posBuf: WebGLBuffer;
   private uvBuf: WebGLBuffer;
@@ -151,6 +153,7 @@ export class LiquidGlassRenderer {
       blur_uHorizontal: gl.getUniformLocation(this.blurProg,  'uHorizontal'),
       blur_uSaturate:   gl.getUniformLocation(this.blurProg,  'uSaturate'),
       glass_uLayerTex:     gl.getUniformLocation(this.glassProg, 'uLayerTex'),
+      glass_uLightingTex:  gl.getUniformLocation(this.glassProg, 'uLightingTex'),
       glass_uBlurredBgTex: gl.getUniformLocation(this.glassProg, 'uBlurredBgTex'),
       glass_uOrigBgTex:    gl.getUniformLocation(this.glassProg, 'uOrigBgTex'),
       glass_uParams1:      gl.getUniformLocation(this.glassProg, 'uParams1'),
@@ -194,6 +197,7 @@ export class LiquidGlassRenderer {
     this.fboA      = makeFBO(gl, this.texA);
     this.fboB      = makeFBO(gl, this.texB);
     this.layerTex  = makeTexture(gl, this.size, this.size);
+    this.lightingTex = makeTexture(gl, this.size, this.size);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     this.origBgTex = makeTexture(gl, this.size, this.size);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
@@ -206,6 +210,7 @@ export class LiquidGlassRenderer {
     gl.uniform1i(u.glass_uLayerTex, 0);
     gl.uniform1i(u.glass_uBlurredBgTex, 1);
     gl.uniform1i(u.glass_uOrigBgTex, 2);
+    gl.uniform1i(u.glass_uLightingTex, 3);
     gl.uniform2f(u.glass_uTexelSize, 1 / this.size, 1 / this.size);
   }
 
@@ -245,7 +250,7 @@ export class LiquidGlassRenderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  render(layerSource: TexImageSource, bgSource: TexImageSource, params: LiquidGlassParams, bgKey = '') {
+  render(layerSource: TexImageSource, lightingSource: TexImageSource, bgSource: TexImageSource, params: LiquidGlassParams, bgKey = '') {
     const { gl } = this;
     const sz = this.size;
 
@@ -255,7 +260,8 @@ export class LiquidGlassRenderer {
     const effectiveBgKey = bgKey ? `${bgKey}:${blurRadius.toFixed(2)}:${params.mode}` : '';
     this.blurBackground(bgSource, blurRadius, params.mode === 1, effectiveBgKey);
 
-    uploadSourceTexture(gl, this.layerTex, layerSource);
+    uploadSourceTexture(gl, this.layerTex, layerSource, false);
+    uploadSourceTexture(gl, this.lightingTex, lightingSource);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, sz, sz);
@@ -275,6 +281,9 @@ export class LiquidGlassRenderer {
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.origBgTex);
 
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.lightingTex);
+
     gl.uniform4f(u.glass_uParams1, params.blur, params.translucency, params.specular ? params.specularIntensity : 0.0, params.opacity);
     gl.uniform4f(u.glass_uParams2, params.darkAdjust, params.monoAdjust, params.aberration, params.mode);
     gl.uniform4f(u.glass_uParams3, params.specularEdge, params.rimIntensity, params.envReflection, params.innerGlow);
@@ -290,6 +299,7 @@ export class LiquidGlassRenderer {
   dispose() {
     const { gl } = this;
     gl.deleteTexture(this.layerTex);
+    gl.deleteTexture(this.lightingTex);
     gl.deleteTexture(this.origBgTex);
     gl.deleteTexture(this.texA);
     gl.deleteTexture(this.texB);

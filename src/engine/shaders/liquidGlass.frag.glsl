@@ -1,5 +1,6 @@
 #version 300 es
 precision highp float;
+precision highp sampler2D;
 
 // [A] SPECULAR — bright spot at the lit corner edge
 const float GL_RIM_POWER      = 2.4;  // rim falloff — higher = thinner rim
@@ -11,6 +12,7 @@ in vec2 vUV;
 in vec2 vScreenUV;
 
 uniform sampler2D uLayerTex;       // layer content (alpha = glass mask)
+uniform sampler2D uLightingTex;    // smoothed alpha for lighting and refraction
 uniform sampler2D uBlurredBgTex;   // 2-pass Gaussian blurred background
 uniform sampler2D uOrigBgTex;      // original (sharp) background
 
@@ -30,7 +32,7 @@ vec3 toLinear(vec3 srgb) { vec3 s = max(srgb, 0.0); return s * s; }
 vec3 toSRGB(vec3 lin)    { return sqrt(max(lin, 0.0)); }
 
 float sampleAlpha(vec2 uv) {
-  return texture(uLayerTex, uv).a;
+  return textureLod(uLightingTex, uv, 0.0).a;
 }
 
 vec2 alphaGradient(vec2 uv) {
@@ -49,17 +51,45 @@ float edgeMagnitude(float alpha) {
   return smoothstep(0.0, px * 1.25, w);
 }
 
+// ── Cubic reconstruction keeps bevel normals continuous across mip texels ──
+float bevelAlphaAtLod(vec2 uv, float lod) {
+  vec2 size = vec2(textureSize(uLightingTex, int(lod)));
+  vec2 p = uv * size - 0.5;
+  vec2 f = fract(p);
+  vec2 f2 = f * f;
+  vec2 f3 = f2 * f;
+  vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+  vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+  vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+  vec2 w3 = f3 / 6.0;
+  vec2 g0 = w0 + w1;
+  vec2 g1 = w2 + w3;
+  vec2 p0 = (floor(p) - 0.5 + w1 / g0) / size;
+  vec2 p1 = (floor(p) + 1.5 + w3 / g1) / size;
+  float a00 = textureLod(uLightingTex, p0, lod).a;
+  float a10 = textureLod(uLightingTex, vec2(p1.x, p0.y), lod).a;
+  float a01 = textureLod(uLightingTex, vec2(p0.x, p1.y), lod).a;
+  float a11 = textureLod(uLightingTex, p1, lod).a;
+  return mix(mix(a00, a10, g1.x), mix(a01, a11, g1.x), g1.y);
+}
+
+float bevelAlpha(vec2 uv, float lod) {
+  float level = floor(lod);
+  return mix(bevelAlphaAtLod(uv, level), bevelAlphaAtLod(uv, level + 1.0), fract(lod));
+}
+
 vec2 bevelGradient(vec2 uv, float lod, vec2 eps) {
-  float aR = textureLod(uLayerTex, uv + vec2(eps.x, 0.0), lod).a;
-  float aL = textureLod(uLayerTex, uv - vec2(eps.x, 0.0), lod).a;
-  float aU = textureLod(uLayerTex, uv + vec2(0.0, eps.y), lod).a;
-  float aD = textureLod(uLayerTex, uv - vec2(0.0, eps.y), lod).a;
+  float aR = bevelAlpha(uv + vec2(eps.x, 0.0), lod);
+  float aL = bevelAlpha(uv - vec2(eps.x, 0.0), lod);
+  float aU = bevelAlpha(uv + vec2(0.0, eps.y), lod);
+  float aD = bevelAlpha(uv - vec2(0.0, eps.y), lod);
   return vec2(aR - aL, aU - aD);
 }
 
 void main() {
-  float alpha = sampleAlpha(vUV);
-  float edge  = edgeMagnitude(alpha);
+  vec4 layerColor = textureLod(uLayerTex, vUV, 0.0);
+  float alpha = layerColor.a;
+  float edge  = edgeMagnitude(sampleAlpha(vUV));
   if (alpha < 0.01) { fragColor = vec4(0.0); return; }
 
   vec2  grad     = alphaGradient(vUV);
@@ -72,10 +102,10 @@ void main() {
   float rimZone  = smoothstep(0.08, 0.80, normalLen);
   float baseZone = 1.0 - normalLen;
 
-  // ── Bevel field: coarse mip of the layer alpha ≈ distance to edge ─────────
+  // ── Bevel field from the smoothed lighting mask ──────────────────────────
   float bevelLod = uParams5.x;
   vec2  bevelEps = uParams5.y * 0.5 * uTexelSize;
-  float aBevel   = textureLod(uLayerTex, vUV, bevelLod).a;
+  float aBevel   = bevelAlpha(vUV, bevelLod);
   vec2  gB       = bevelGradient(vUV, bevelLod, bevelEps);
   vec2  nIn      = length(gB) > 1e-4 ? normalize(gB) : vec2(0.0);   // points inward
   float tB       = clamp((aBevel - 0.5) * 2.0, 0.0, 1.0);          // 0 edge → 1 plateau
@@ -113,7 +143,6 @@ void main() {
   vec4 bgBase    = mix(bgSharp, bgBlurred, clamp(uParams1.x, 0.0, 1.0) * (1.0 - 0.15 * bevelF));
   bgBase.rgb     = mix(bgBase.rgb, frostTint.rgb, uParams1.x * uParams4.z);
 
-  vec4 layerColor = texture(uLayerTex, vUV);
   layerColor.rgb  = toLinear(layerColor.rgb);
   vec4 glassBase  = bgBase;
 

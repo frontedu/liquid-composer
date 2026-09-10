@@ -610,7 +610,6 @@ async function buildContentCanvas(
   layer: Layer,
   size: number,
   appearanceMode: AppearanceMode = 'default',
-  softEdge = true,
 ): Promise<HTMLCanvasElement> {
   const { layout } = layer;
   const scale = layout.scale / 100;
@@ -630,7 +629,7 @@ async function buildContentCanvas(
 
   if (layer.blobUrl) {
     try {
-      const img = await loadRaster(layer.blobUrl, Math.ceil(size / 512) * 512);
+      const img = await loadRaster(layer.blobUrl, Math.ceil(size * Math.max(1, scale) / 512) * 512);
       const iw = img.naturalWidth;
       const ih = img.naturalHeight;
       const sc = Math.min(size / iw, size / ih);
@@ -694,16 +693,7 @@ async function buildContentCanvas(
   }
 
   ctx.restore();
-  if (!softEdge) return canvas;
-
-  // ── Soft-edge pass: blur the content canvas by ~1px to smooth alpha edges ──
-  const blurPx = Math.max(1.0, size * 0.0013);
-  const softCanvas = document.createElement('canvas');
-  softCanvas.width = softCanvas.height = size;
-  const sc = softCanvas.getContext('2d')!;
-  sc.filter = `blur(${blurPx}px)`;
-  sc.drawImage(canvas, 0, 0);
-  return softCanvas;
+  return canvas;
 }
 
 function drawContentFlat(outCtx: CanvasRenderingContext2D, contentCanvas: HTMLCanvasElement): void {
@@ -723,7 +713,7 @@ async function renderLayerToCanvas(
 ): Promise<HTMLCanvasElement | null> {
   if (!layer.visible) return null;
 
-  const contentCanvas = await buildContentCanvas(layer, size, mode, layer.liquidGlass.enabled);
+  const contentCanvas = await buildContentCanvas(layer, size, mode);
   const liquidGlass = layer.liquidGlass;
 
   const out = document.createElement('canvas');
@@ -735,15 +725,20 @@ async function renderLayerToCanvas(
     return out;
   }
 
+  // ── Smooth lighting mask, separate from the sharp artwork and silhouette ──
+  const { canvas: lightingMask, ctx: mc } = scratch.getCanvas('layer-lighting-mask', size);
+  mc.filter = `blur(${Math.max(1.0, size * 0.0013)}px)`;
+  mc.drawImage(contentCanvas, 0, 0);
+
   const fillKey = layer.fill.type === 'solid' ? layer.fill.color : layer.fill.type === 'gradient' ? JSON.stringify(layer.fill.stops) : '';
   const tintKey = `${layer.id}:${mode}:${layer.blobUrl ?? ''}:${layer.fill.type}:${fillKey}`;
   const rect = { cx: size * (0.5 + layer.layout.x / 100), cy: size * (0.5 + layer.layout.y / 100), half: size * layer.layout.scale / 200 };
   const shadowBg = mode === 'dark' ? NEUTRAL_SHADOW_BG : background;
 
   const drawWithoutRefraction = () => {
-    drawDropShadow(outCtx, contentCanvas, size, liquidGlass.shadow, shadowBg, layer, scratch);
+    drawDropShadow(outCtx, lightingMask, size, liquidGlass.shadow, shadowBg, layer, scratch);
     drawContentFlat(outCtx, contentCanvas);
-    drawLayerBevel(outCtx, contentCanvas, bgCanvas, size, lightAngle, tintKey, liquidGlass, scratch, rect);
+    drawLayerBevel(outCtx, lightingMask, bgCanvas, size, lightAngle, tintKey, liquidGlass, scratch, rect);
     return out;
   };
 
@@ -774,17 +769,17 @@ async function renderLayerToCanvas(
   };
 
   try {
-    renderer.render(contentCanvas, bgCanvas, params, bgKey);
+    renderer.render(contentCanvas, lightingMask, bgCanvas, params, bgKey);
   } catch (err) {
     reportWebglError(err);
     return drawWithoutRefraction();
   }
 
-  drawDropShadow(outCtx, contentCanvas, size, liquidGlass.shadow, shadowBg, layer, scratch);
+  drawDropShadow(outCtx, lightingMask, size, liquidGlass.shadow, shadowBg, layer, scratch);
 
   outCtx.drawImage(renderer.canvas, 0, 0);
 
-  drawLayerBevel(outCtx, contentCanvas, bgCanvas, size, lightAngle, tintKey, liquidGlass, scratch, rect);
+  drawLayerBevel(outCtx, lightingMask, bgCanvas, size, lightAngle, tintKey, liquidGlass, scratch, rect);
 
   return out;
 }
@@ -1033,7 +1028,7 @@ async function renderIconToCanvasImpl(
     drawSquirclePath(fc, 0, 0, size);
     fc.fill();
 
-    const featherPx = Math.max(1.2, size * 0.0015);
+    const featherPx = 1.2;
     const blurCanvas = document.createElement('canvas');
     blurCanvas.width = blurCanvas.height = size;
     const bc = blurCanvas.getContext('2d')!;
