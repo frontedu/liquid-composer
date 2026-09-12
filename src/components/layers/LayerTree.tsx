@@ -142,12 +142,16 @@ function FileUploadZone({ onFiles }: { onFiles: (files: File[]) => void }) {
         );
         if (files.length) onFiles(files);
       }}
-      onClick={() => inputRef.current?.click()}
-      className={`mx-2 my-1 border-2 border-dashed rounded-lg p-3 flex flex-col items-center gap-1 cursor-pointer transition-colors
-        ${over ? 'border-[#0a84ff] bg-[#0a84ff]/10' : 'border-white/[0.12] hover:border-white/[0.25]'}`}
+      className="layer-import"
+      data-drag-over={over}
     >
-      <Plus size={18} weight="bold" className="text-[#636366]" />
-      <span className="text-xs text-[#636366] text-center">Drop SVG/PNG or click to add</span>
+      <button type="button" onClick={() => inputRef.current?.click()}>
+        <Plus size={18} />
+        <span>
+          Import Artwork…
+          <span className="layer-import-caption">Drop SVG, PNG, or JPEG</span>
+        </span>
+      </button>
       <input
         ref={inputRef}
         type="file"
@@ -171,40 +175,49 @@ function SettingsDropdown() {
 
   useEffect(() => {
     if (!open) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="switch"]')?.focus();
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
     };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setOpen(false);
+      menuRef.current?.querySelector<HTMLButtonElement>('[aria-haspopup]')?.focus();
+    };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', handleKey);
+    };
   }, [open]);
 
   return (
-    <div className="relative" ref={menuRef}>
+    <div className="relative" ref={menuRef} onBlur={(e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setOpen(false); }}>
       <button
         onClick={() => setOpen((v) => !v)}
         title="Save settings"
-        className={`p-1 rounded hover:bg-white/[0.08] transition-colors ${
-          open ? 'text-[#ebebf5]' : 'text-[#636366] hover:text-[#ebebf5]'
-        }`}
+        aria-label="Save settings"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="save-settings-popover"
+        className="editor-icon-button"
       >
-        <CloudArrowDown size={14} weight="bold" />
+        <CloudArrowDown size={16} />
       </button>
       {open && (
         <div
-          className="absolute right-0 top-full mt-2 z-[100] py-1.5 rounded-[12px] shadow-xl w-44"
-          style={{
-            background: 'rgba(30,30,32,0.95)',
-            backdropFilter: 'blur(40px)',
-            WebkitBackdropFilter: 'blur(40px)',
-            border: '0.5px solid rgba(255,255,255,0.10)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0.5px 0 rgba(255,255,255,0.07)',
-          }}
+          id="save-settings-popover"
+          role="dialog"
+          aria-label="Save settings"
+          className="editor-popover editor-settings-popover"
         >
           <div className="flex items-center justify-between px-3 py-[5px]">
-            <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.65)' }}>
+            <span className="text-xs font-medium text-[#d1d1d6]">
               Auto-save
             </span>
-            <Toggle checked={persistenceEnabled} onChange={(v) => $persistenceEnabled.set(v)} />
+            <Toggle ariaLabel="Auto-save" checked={persistenceEnabled} onChange={(v) => $persistenceEnabled.set(v)} />
           </div>
           <div className="mx-2 my-1" style={{ height: '0.5px', background: 'rgba(255,255,255,0.08)' }} />
           <button
@@ -214,10 +227,7 @@ function SettingsDropdown() {
                 clearPersistence();
               }
             }}
-            className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors flex items-center gap-1.5"
-            style={{ color: '#ff453a' }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,69,58,0.10)')}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+            className="editor-menu-item editor-menu-danger"
           >
             <Trash size={13} weight="bold" />
             Reset Progress
@@ -339,31 +349,32 @@ export function LayerTree() {
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.07]">
-        <span className="text-xs font-medium text-[#ebebf5]">Layers</span>
-        <div className="flex items-center gap-1">
+    <div className="flex flex-col h-full min-h-0">
+      <div className="editor-panel-header">
+        <span className="font-semibold">Layers</span>
+        <div className="flex items-center">
           <SettingsDropdown />
-          <div className="w-px h-3.5 bg-white/[0.10] mx-0.5" />
           <button
             onClick={addGroup}
             title="Add group"
-            className="p-1 rounded hover:bg-white/[0.08] text-[#636366] hover:text-[#ebebf5] transition-colors"
+            aria-label="Add group"
+            className="editor-icon-button"
           >
-            <Folder size={14} weight="bold" />
+            <Folder size={16} />
           </button>
           <button
             onClick={() => addLayer()}
             title="Add layer"
-            className="p-1 rounded hover:bg-white/[0.08] text-[#636366] hover:text-[#ebebf5] transition-colors"
+            aria-label="Add layer"
+            className="editor-icon-button"
           >
-            <Plus size={14} weight="bold" />
+            <Plus size={16} />
           </button>
         </div>
       </div>
 
       <div
-        className="flex-1 overflow-y-auto flex flex-col"
+        className="flex-1 min-h-0 overflow-y-auto flex flex-col"
         onDragEnd={resetDrag}
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) clearTargets(); }}
       >
@@ -444,7 +455,7 @@ export function LayerTree() {
         draggable={false}
         aria-pressed={selectedId === CANVAS_SELECTION_ID}
         onClick={() => selectLayer(CANVAS_SELECTION_ID)}
-        className={`flex items-center gap-2 px-3 min-h-9 mx-1 mb-1 shrink-0 rounded-[6px] border-t border-white/[0.04] text-xs text-left transition-colors ${selectedId === CANVAS_SELECTION_ID ? 'bg-[#0a84ff]/65 text-white' : 'text-[#ebebf5] hover:bg-white/[0.06]'}`}
+        className="layer-canvas-button"
       >
         <Square size={18} aria-hidden="true" />
         Canvas

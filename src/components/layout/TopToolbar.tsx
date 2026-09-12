@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@nanostores/react';
-import { CaretDown, Sun, MagnifyingGlass } from '@phosphor-icons/react';
+import { CaretDown, Check, Sun, MagnifyingGlass, DownloadSimple } from '@phosphor-icons/react';
 import type { ExportOptions } from '../../engine/IconRenderer';
 import { BackgroundControls } from '../inspector/BackgroundControls';
 import {
@@ -21,16 +21,18 @@ const EXPORT_OPTIONS: ExportOptions[] = [
   { format: 'png',  size: 1024, clipboard: true },
   { format: 'png',  size: 4096 },
   { format: 'png',  size: 2048 },
+  { format: 'png',  size: 1024 },
   { format: 'png',  size: 512 },
   { format: 'png',  size: 256 },
   { format: 'jpeg', size: 1024 },
   { format: 'png',  size: 1024, allModes: true },
 ];
 const FORMAT_LABEL: Record<ExportOptions['format'], string> = { png: 'PNG', jpeg: 'JPEG' };
+type ToolbarPopover = 'background' | 'light' | 'zoom' | 'export';
 
 function exportLabel(opt: ExportOptions): string {
   if (opt.clipboard) return 'Copy PNG';
-  if (opt.allModes)  return 'ZIP';
+  if (opt.allModes)  return 'All Appearances';
   return `${FORMAT_LABEL[opt.format]}${opt.size === 4096 ? ' · 4K' : opt.size === 2048 ? ' · 2K' : ''}`;
 }
 
@@ -41,10 +43,7 @@ export function TopToolbar() {
   const zoom        = useStore($zoom);
   const bg          = useStore($background);
 
-  const [showBgPicker,   setShowBgPicker]  = useState(false);
-  const [showZoomMenu,   setShowZoomMenu]  = useState(false);
-  const [showLightMenu,  setShowLightMenu] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [openPopover, setOpenPopover] = useState<ToolbarPopover | null>(null);
   const [editingName,    setEditingName]   = useState(false);
   const [nameInput,      setNameInput]     = useState(name);
 
@@ -54,24 +53,45 @@ export function TopToolbar() {
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!showBgPicker && !showZoomMenu && !showLightMenu && !showExportMenu) return;
+    if (!openPopover) return;
+    const refs = { background: bgPickerRef, zoom: zoomMenuRef, light: lightMenuRef, export: exportMenuRef };
+    const container = refs[openPopover].current;
+    const popover = container?.querySelector<HTMLElement>('.editor-popover');
+    const selected = popover?.querySelector<HTMLElement>('[aria-checked="true"]');
+    (selected ?? popover?.querySelector<HTMLElement>('button, input, select'))?.focus();
     const handle = (e: MouseEvent) => {
-      if (showBgPicker  && bgPickerRef.current  && !bgPickerRef.current.contains(e.target as Node))
-        setShowBgPicker(false);
-      if (showZoomMenu  && zoomMenuRef.current  && !zoomMenuRef.current.contains(e.target as Node))
-        setShowZoomMenu(false);
-      if (showLightMenu && lightMenuRef.current && !lightMenuRef.current.contains(e.target as Node))
-        setShowLightMenu(false);
-      if (showExportMenu && exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node))
-        setShowExportMenu(false);
+      if (!container?.contains(e.target as Node)) setOpenPopover(null);
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setOpenPopover(null);
+      container?.querySelector<HTMLButtonElement>('[aria-haspopup]')?.focus();
     };
     document.addEventListener('mousedown', handle);
-    return () => document.removeEventListener('mousedown', handle);
-  }, [showBgPicker, showZoomMenu, showLightMenu, showExportMenu]);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handle);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [openPopover]);
+
+  const togglePopover = (popover: ToolbarPopover) => setOpenPopover((current) => current === popover ? null : popover);
+
+  const handleMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]'));
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+      : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items[next]?.focus();
+  };
 
   const exportAs = (detail: ExportOptions) => {
     window.dispatchEvent(new CustomEvent<ExportOptions>('icon-export', { detail }));
-    setShowExportMenu(false);
+    setOpenPopover(null);
+    exportMenuRef.current?.querySelector('button')?.focus();
   };
 
   const commitName = () => { setIconName(nameInput); setEditingName(false); };
@@ -149,230 +169,174 @@ export function TopToolbar() {
     : `linear-gradient(135deg, ${bgColorsFromHueTint(bg.hue ?? 220, bg.tint ?? 20, bg.brightness ?? 100).join(', ')})`;
 
   return (
-    <div
-      className="flex items-center h-11 pl-3 pr-2 select-none relative z-20"
-      style={{
-        background: 'rgba(13,13,16,0.85)',
-        backdropFilter: 'blur(32px) saturate(200%)',
-        WebkitBackdropFilter: 'blur(32px) saturate(200%)',
-        borderBottom: '0.5px solid rgba(255,255,255,0.07)',
-      }}
+    <header
+      className="editor-toolbar"
+      onBlur={(e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setOpenPopover(null); }}
     >
-      <div className="flex items-center gap-2 min-w-[160px]">
+      <div className="editor-document">
         {editingName ? (
           <input
             autoFocus
             type="text"
+            aria-label="Document name"
             value={nameInput}
             onChange={(e) => setNameInput(e.target.value)}
             onBlur={commitName}
             onKeyDown={(e) => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') cancelName(); }}
-            className="text-[11px] font-medium rounded-[6px] px-2 py-0.5 focus:outline-hidden w-32"
-            style={{ background: 'rgba(255,255,255,0.08)', border: '0.5px solid rgba(10,132,255,0.8)', color: '#ffffff' }}
+            className="editor-document-input"
           />
         ) : (
           <button
             onDoubleClick={() => { setNameInput(name); setEditingName(true); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === 'F2') {
+                e.preventDefault();
+                setNameInput(name);
+                setEditingName(true);
+              }
+            }}
             title="Double-click to rename"
-            className="text-[11px] font-semibold truncate max-w-[128px] cursor-text text-left"
-            style={{ color: 'rgba(255,255,255,0.80)' }}
+            className="editor-document-name"
           >
             {name}
           </button>
         )}
-        {modified && (
-          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'rgba(255,255,255,0.30)' }} title="Unsaved changes" />
-        )}
+        {modified && <span className="editor-document-modified" title="Unsaved changes" />}
       </div>
 
-      <div className="flex-1 flex items-center justify-center gap-2">
-
+      <div className="editor-toolbar-tools">
         <div ref={bgPickerRef} className="relative">
           <button
-            onClick={() => setShowBgPicker(!showBgPicker)}
-            className="flex items-center gap-2 px-2.5 py-[5px] rounded-[8px] transition-all duration-150"
-            style={{ background: 'rgba(255,255,255,0.055)', border: '0.5px solid rgba(255,255,255,0.09)' }}
+            onClick={() => togglePopover('background')}
+            className="editor-tool-button"
             title="Background color"
+            aria-haspopup="dialog"
+            aria-expanded={openPopover === 'background'}
+            aria-controls="background-popover"
           >
-            <div
-              className="w-[18px] h-[18px] rounded-[5px] shrink-0"
-              style={{ background: bgPreview, boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.15)' }}
-            />
-            <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.50)' }}>Background</span>
-            <CaretDown size={10} weight="bold" style={{ color: 'rgba(255,255,255,0.30)' }} />
+            <span className="editor-color-swatch" style={{ background: bgPreview }} />
+            <span>Background</span>
+            <CaretDown size={10} weight="bold" className="editor-chevron" />
           </button>
-
-          {showBgPicker && (
+          {openPopover === 'background' && (
             <div
-              className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 rounded-[16px] w-64 shadow-2xl overflow-hidden"
-              style={{
-                background: 'rgba(30,30,32,0.97)',
-                backdropFilter: 'blur(40px) saturate(200%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(200%)',
-                border: '0.5px solid rgba(255,255,255,0.10)',
-                boxShadow: '0 8px 40px rgba(0,0,0,0.6), inset 0 0.5px 0 rgba(255,255,255,0.08)',
-              }}
+              id="background-popover"
+              role="dialog"
+              aria-label="Background color"
+              className="editor-popover editor-background-popover"
             >
+              <div className="editor-popover-heading">Background</div>
               <BackgroundControls />
             </div>
           )}
         </div>
 
-        <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.08)' }} />
-
-        <div ref={lightMenuRef} className="relative">
-          <button
-            onClick={() => setShowLightMenu(!showLightMenu)}
-            className="flex items-center gap-1 text-[11px] font-medium"
-            style={{ color: 'rgba(255,255,255,0.55)' }}
-          >
-            <Sun
-              size={16}
-              weight="bold"
-              className="shrink-0 cursor-ew-resize"
-              style={{ color: 'rgba(255,255,255,0.40)' }}
-              onMouseDown={(e: React.MouseEvent) => { e.stopPropagation(); handleLightIconMouseDown(e); }}
-              aria-label="Drag to step light angle"
-            />
-            <span className="tabular-nums">{toDisplayAngle(lightAngle)}°</span>
-            <CaretDown size={8} weight="bold" style={{ color: 'rgba(255,255,255,0.25)' }} />
-          </button>
-
-          {showLightMenu && (
-            <div
-              className="absolute top-full left-0 mt-2 z-50 py-1.5 rounded-[12px] shadow-xl min-w-[130px]"
-              style={{
-                background: 'rgba(30,30,32,0.95)',
-                backdropFilter: 'blur(40px)',
-                WebkitBackdropFilter: 'blur(40px)',
-                border: '0.5px solid rgba(255,255,255,0.10)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0.5px 0 rgba(255,255,255,0.07)',
-              }}
+        <div className="editor-tool-group">
+          <div ref={lightMenuRef} className="relative">
+            <button
+              onClick={() => togglePopover('light')}
+              className="editor-tool-button"
+              title="Light angle"
+              aria-label={`Light angle: ${toDisplayAngle(lightAngle)} degrees`}
+              aria-haspopup="menu"
+              aria-expanded={openPopover === 'light'}
+              aria-controls="light-menu"
             >
-              {[...LIGHT_ANGLE_LEVELS].reverse().map((a) => (
-                <button
-                  key={a}
-                  onClick={() => { setLightAngle(a); setShowLightMenu(false); }}
-                  className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors flex items-center justify-between gap-3"
-                  style={{ color: lightAngle === a ? '#0a84ff' : 'rgba(255,255,255,0.65)' }}
-                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)')}
-                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
-                >
-                  <span>{LIGHT_ANGLE_LABELS[a]}</span>
-                  <span className="tabular-nums" style={{ color: lightAngle === a ? '#0a84ff' : 'rgba(255,255,255,0.30)' }}>{toDisplayAngle(a)}°</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="w-px h-4" style={{ background: 'rgba(255,255,255,0.08)' }} />
-
-        <div ref={zoomMenuRef} className="relative">
-          <button
-            onClick={() => setShowZoomMenu(!showZoomMenu)}
-            className="flex items-center gap-1 text-[11px] font-medium"
-            style={{ color: 'rgba(255,255,255,0.55)' }}
-          >
-            <MagnifyingGlass
-              size={16}
-              weight="bold"
-              className="shrink-0 cursor-ew-resize"
-              style={{ color: 'rgba(255,255,255,0.40)' }}
-              onMouseDown={(e: React.MouseEvent) => { e.stopPropagation(); handleZoomIconMouseDown(e); }}
-              aria-label="Drag to step zoom"
-            />
-            <span className="tabular-nums">{zoom}%</span>
-            <CaretDown size={8} weight="bold" style={{ color: 'rgba(255,255,255,0.25)' }} />
-          </button>
-
-          {showZoomMenu && (
-            <div
-              className="absolute top-full right-0 mt-2 z-50 py-1.5 rounded-[12px] shadow-xl min-w-[110px]"
-              style={{
-                background: 'rgba(30,30,32,0.95)',
-                backdropFilter: 'blur(40px)',
-                WebkitBackdropFilter: 'blur(40px)',
-                border: '0.5px solid rgba(255,255,255,0.10)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0.5px 0 rgba(255,255,255,0.07)',
-              }}
+              <Sun size={17} className="cursor-ew-resize" onMouseDown={handleLightIconMouseDown} />
+              <span className="tabular-nums">{toDisplayAngle(lightAngle)}°</span>
+              <CaretDown size={10} weight="bold" className="editor-chevron" />
+            </button>
+            {openPopover === 'light' && (
+              <div id="light-menu" role="menu" aria-label="Light angle" className="editor-popover editor-menu left-0" onKeyDown={handleMenuKeyDown}>
+                {[...LIGHT_ANGLE_LEVELS].reverse().map((a) => (
+                  <button
+                    key={a}
+                    role="menuitemradio"
+                    aria-checked={lightAngle === a}
+                    tabIndex={-1}
+                    onClick={() => { setLightAngle(a); setOpenPopover(null); lightMenuRef.current?.querySelector('button')?.focus(); }}
+                    className="editor-menu-item"
+                  >
+                    <Check size={13} weight="bold" className={lightAngle === a ? '' : 'invisible'} />
+                    <span>{LIGHT_ANGLE_LABELS[a]}</span>
+                    <span className="editor-menu-detail">{toDisplayAngle(a)}°</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <span className="editor-tool-divider" aria-hidden="true" />
+          <div ref={zoomMenuRef} className="relative">
+            <button
+              onClick={() => togglePopover('zoom')}
+              className="editor-tool-button"
+              title="Zoom"
+              aria-label={`Zoom: ${zoom} percent`}
+              aria-haspopup="menu"
+              aria-expanded={openPopover === 'zoom'}
+              aria-controls="zoom-menu"
             >
-              {ZOOM_LEVELS.map((z) => (
-                <button
-                  key={z}
-                  onClick={() => { setZoom(z); setShowZoomMenu(false); }}
-                  className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors flex items-center justify-between gap-3"
-                  style={{ color: zoom === z ? '#0a84ff' : 'rgba(255,255,255,0.65)' }}
-                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)')}
-                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
-                >
-                  <span>{z}%</span>
-                  <span className="tabular-nums" style={{ color: zoom === z ? '#0a84ff' : 'rgba(255,255,255,0.30)' }}>{Math.round(1024 * (z / 100))}pt</span>
-                </button>
-              ))}
-            </div>
-          )}
+              <MagnifyingGlass size={17} className="cursor-ew-resize" onMouseDown={handleZoomIconMouseDown} />
+              <span className="tabular-nums">{zoom}%</span>
+              <CaretDown size={10} weight="bold" className="editor-chevron" />
+            </button>
+            {openPopover === 'zoom' && (
+              <div id="zoom-menu" role="menu" aria-label="Zoom" className="editor-popover editor-menu right-0" onKeyDown={handleMenuKeyDown}>
+                {ZOOM_LEVELS.map((z) => (
+                  <button
+                    key={z}
+                    role="menuitemradio"
+                    aria-checked={zoom === z}
+                    tabIndex={-1}
+                    onClick={() => { setZoom(z); setOpenPopover(null); zoomMenuRef.current?.querySelector('button')?.focus(); }}
+                    className="editor-menu-item"
+                  >
+                    <Check size={13} weight="bold" className={zoom === z ? '' : 'invisible'} />
+                    <span>{z}%</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 min-w-[160px] justify-end">
+      <div className="editor-toolbar-actions">
         <div ref={exportMenuRef} className="relative">
-          <div
-            className="flex items-stretch rounded-full overflow-hidden transition-transform duration-150 active:scale-[0.97]"
-            style={{
-              background: 'rgba(10,132,255,0.88)',
-              color: '#ffffff',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.30), inset 0 0.5px 0 rgba(255,255,255,0.35)',
-            }}
-          >
-            <button
-              onClick={() => exportAs(DEFAULT_EXPORT)}
-              className="pl-4 pr-3 py-[6px] text-[11px] font-semibold tracking-tight"
-            >
+          <div className="editor-export">
+            <button onClick={() => exportAs(DEFAULT_EXPORT)} className="editor-export-action" title="Export PNG · 1024 × 1024">
+              <DownloadSimple size={16} aria-hidden="true" />
               Export
             </button>
-            <div className="w-px my-[6px]" style={{ background: 'rgba(255,255,255,0.22)' }} />
             <button
-              onClick={() => setShowExportMenu(!showExportMenu)}
+              onClick={() => togglePopover('export')}
               aria-label="More export options"
               aria-haspopup="menu"
-              aria-expanded={showExportMenu}
-              className="pl-2 pr-2.5 flex items-center"
+              aria-expanded={openPopover === 'export'}
+              aria-controls="export-menu"
+              className="editor-export-options"
             >
-              <CaretDown size={9} weight="bold" />
+              <CaretDown size={10} weight="bold" />
             </button>
           </div>
-
-          {showExportMenu && (
-            <div
-              role="menu"
-              className="absolute top-full right-0 mt-2 z-50 py-1.5 rounded-[12px] shadow-xl min-w-[150px]"
-              style={{
-                background: 'rgba(30,30,32,0.95)',
-                backdropFilter: 'blur(40px)',
-                WebkitBackdropFilter: 'blur(40px)',
-                border: '0.5px solid rgba(255,255,255,0.10)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0.5px 0 rgba(255,255,255,0.07)',
-              }}
-            >
+          {openPopover === 'export' && (
+            <div id="export-menu" role="menu" aria-label="Export" className="editor-popover editor-menu right-0" onKeyDown={handleMenuKeyDown}>
               {EXPORT_OPTIONS.map((opt) => (
                 <button
-                  key={exportLabel(opt)}
+                  key={opt.clipboard ? 'clipboard' : opt.allModes ? 'zip' : `${opt.format}-${opt.size}`}
                   role="menuitem"
+                  tabIndex={-1}
                   onClick={() => exportAs(opt)}
-                  className="w-full text-left px-3 py-[5px] text-[11px] font-medium transition-colors flex items-center justify-between gap-3"
-                  style={{ color: 'rgba(255,255,255,0.65)' }}
-                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)')}
-                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+                  className={`editor-menu-item ${opt.allModes || opt.size === 4096 ? 'editor-menu-separated' : ''}`}
                 >
                   <span>{exportLabel(opt)}</span>
-                  {!opt.allModes && <span className="tabular-nums" style={{ color: 'rgba(255,255,255,0.30)' }}>({opt.size} px)</span>}
+                  <span className="editor-menu-detail">{opt.allModes ? 'ZIP' : `${opt.size} px`}</span>
                 </button>
               ))}
             </div>
           )}
         </div>
       </div>
-    </div>
+    </header>
   );
 }

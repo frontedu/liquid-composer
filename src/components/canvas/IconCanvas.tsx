@@ -437,12 +437,12 @@ export function IconCanvas() {
         backgroundPosition: '0 0,0 9px,9px -9px,-9px 0px',
       };
     }
-    return { background: '#0a0a0f' };
+    return { background: '#171719' };
   })();
 
   return (
     <div
-      className="flex-1 flex items-center justify-center relative overflow-hidden"
+      className="icon-workspace flex-1 min-w-0 flex items-center justify-center relative overflow-hidden"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -462,13 +462,6 @@ export function IconCanvas() {
         </div>
       )}
 
-      <div
-        className="absolute inset-0 opacity-[0.04]"
-        style={{
-          backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)',
-          backgroundSize: '24px 24px',
-        }}
-      />
 
       {over && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0a84ff]/20 border-4 border-[#0a84ff] border-dashed">
@@ -556,13 +549,14 @@ export function IconCanvas() {
         })()}
       </div>
 
-      <BottomBar />
-
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/30 backdrop-blur-xs rounded-full px-3 py-1">
+      <div className="canvas-controls" onPointerDown={(e) => e.stopPropagation()}>
+        <BottomBar />
         <button
+          type="button"
+          aria-pressed={showSafeArea}
           onClick={() => setShowSafeArea((s) => !s)}
           title="Toggle safe area guide (Apple HIG 70%)"
-          className={`text-xs flex items-center gap-1 transition-colors ${showSafeArea ? 'text-[#0a84ff]' : 'text-white/50 hover:text-white/80'}`}
+          className="canvas-guide-button"
         >
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -571,8 +565,6 @@ export function IconCanvas() {
           </svg>
           Safe area
         </button>
-        <div className="w-px h-3 bg-white/20" />
-        <span className="text-xs text-white/50">{zoom}%</span>
       </div>
     </div>
   );

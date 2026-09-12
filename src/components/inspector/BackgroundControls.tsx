@@ -80,7 +80,6 @@ function GradientSlider({
 
 export function BackgroundControls() {
   const bg = useStore($background);
-  const colorInputRef = useRef<HTMLInputElement>(null);
   const storeBgType     = bg.bgType     ?? 'preset';
   const storeStops      = bg.stops      ?? [{ offset: 0, color: '#2a2a2e' }, { offset: 1, color: '#1a1a1e' }];
   const storeHue        = bg.hue        ?? 220;
@@ -243,14 +242,11 @@ export function BackgroundControls() {
 
       {localBgType === 'preset' ? (
         <div className="p-4 space-y-4">
-          <div className="relative group">
-            <button
-              type="button"
-              aria-label="Choose background color"
-              className="w-full h-8 rounded-[8px] cursor-pointer"
+          <div className="relative group focus-within:outline-2 focus-within:outline-[#64a8ff] focus-within:outline-offset-2 rounded-[8px]">
+            <span
+              aria-hidden="true"
+              className="block w-full h-8 rounded-[8px]"
               style={{ background: bgPreview, boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.12)' }}
-              onClick={() => colorInputRef.current?.click()}
-              title="Click to pick custom color"
             />
             <div
               className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none rounded-[10px]"
@@ -259,11 +255,9 @@ export function BackgroundControls() {
               <span className="text-[10px] text-white font-medium">Custom color</span>
             </div>
             <input
-              ref={colorInputRef}
               type="color"
               aria-label="Background color"
-              tabIndex={-1}
-              className="absolute opacity-0 w-0 h-0 pointer-events-none"
+              className="background-color-picker-input absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               onChange={(e) => handleCustomColor(e.target.value)}
             />
           </div>

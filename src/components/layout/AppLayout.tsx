@@ -5,13 +5,13 @@ import { InspectorPanel } from '../inspector/InspectorPanel';
 
 export function AppLayout() {
   return (
-    <div className="flex flex-col h-screen bg-[#0a0a0f] text-[#ebebf5] font-system overflow-hidden">
+    <div className="editor-app flex flex-col h-screen text-[#ebebf5] font-system overflow-hidden">
       <TopToolbar />
-      <div className="flex flex-1 overflow-hidden">
+      <main className="editor-workspace flex flex-1 min-h-0 overflow-hidden">
         <LeftPanel />
         <IconCanvas />
         <InspectorPanel />
-      </div>
+      </main>
     </div>
   );
 }

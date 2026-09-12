@@ -2,10 +2,10 @@ import { LayerTree } from '../layers/LayerTree';
 
 export function LeftPanel() {
   return (
-    <div className="w-[280px] bg-[#131316] border-r border-white/[0.07] flex flex-col overflow-hidden shrink-0">
-      <div className="flex-1 overflow-hidden">
+    <aside aria-label="Layers" className="layer-sidebar flex flex-col min-h-0 shrink-0">
+      <div className="flex-1 min-h-0">
         <LayerTree />
       </div>
-    </div>
+    </aside>
   );
 }

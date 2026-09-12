@@ -75,9 +75,9 @@ export function InspectorPanel() {
   const isCanvas = selectedId === CANVAS_SELECTION_ID;
 
   return (
-    <div className="inspector-panel w-[280px] shrink-0 min-h-0 bg-[#131316] border-l border-white/[0.07] flex flex-col">
-      <div className="flex items-center border-b border-white/[0.07] px-3 h-9 shrink-0">
-        <span className="text-xs font-medium text-[#ebebf5] truncate" title={layer?.name}>
+    <aside aria-label="Inspector" className="inspector-panel w-[280px] shrink-0 min-h-0 flex flex-col">
+      <div className="editor-panel-header">
+        <span className="font-semibold truncate" title={layer?.name}>
           {isCanvas ? 'Canvas' : layer ? layer.name : 'Inspector'}
         </span>
       </div>
@@ -92,7 +92,7 @@ export function InspectorPanel() {
         </div>
       ) : !layer ? (
         <div className="flex-1 flex items-center justify-center p-4">
-          <p className="text-xs text-[#636366] text-center">
+          <p className="text-xs text-[#a1a1aa] text-center max-w-44 leading-relaxed">
             Select a layer to inspect its properties
           </p>
         </div>
@@ -112,6 +112,6 @@ export function InspectorPanel() {
           )}
         </div>
       )}
-    </div>
+    </aside>
   );
 }

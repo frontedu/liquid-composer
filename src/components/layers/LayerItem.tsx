@@ -60,8 +60,21 @@ export function LayerItem({
       onMouseEnter={() => $hoveredLayerId.set(layer.id)}
       onMouseLeave={() => $hoveredLayerId.set(null)}
       onClick={() => !editing && selectLayer(layer.id)}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectLayer(layer.id);
+        } else if (e.key === 'F2') {
+          e.preventDefault();
+          setEditing(true);
+        }
+      }}
+      data-selected={isSelected}
+      data-visible={layer.visible}
       style={{ paddingLeft: `${(depth + 1) * 12}px`, opacity: isDragging ? 0.35 : 1 }}
-      className={`relative flex items-center gap-2 py-1 mx-1 pr-2 rounded-[6px] cursor-pointer select-none group transition-colors
+      className={`layer-row relative flex items-center gap-2 py-1 mx-2 pr-1 cursor-pointer select-none group transition-colors
         ${isSelected
           ? 'bg-[#0a84ff]/65 text-white'
           : isInsideTarget
@@ -77,6 +90,8 @@ export function LayerItem({
       {isGroup ? (
         <button
           onClick={(e) => { e.stopPropagation(); toggleGroupCollapsed(layer.id); }}
+          aria-label={layer.collapsed ? `Expand ${layer.name}` : `Collapse ${layer.name}`}
+          aria-expanded={!layer.collapsed}
           className={`w-4 h-4 flex items-center justify-center shrink-0 transition-transform
             ${layer.collapsed ? '' : 'rotate-90'}`}
         >
@@ -87,7 +102,7 @@ export function LayerItem({
       )}
 
       <div
-        className="w-9 h-9 rounded-[5px] shrink-0 overflow-hidden flex items-center justify-center p-1"
+        className="w-8 h-8 rounded-[6px] shrink-0 overflow-hidden flex items-center justify-center p-1"
         style={{
           backgroundImage: isGroup ? undefined :
             'linear-gradient(45deg,#333 25%,transparent 25%),' +
@@ -101,12 +116,12 @@ export function LayerItem({
       >
         {isGroup ? (
           <div className="w-full h-full rounded-[3px] flex items-center justify-center bg-white/[0.07]">
-            <Folder size={14} weight="bold" className="text-[#636366]" />
+            <Folder size={16} className="text-[#a1a1aa]" />
           </div>
         ) : layer.blobUrl ? (
           <img src={layer.blobUrl} alt="" className="w-full h-full object-contain" />
         ) : (
-          <Image size={14} weight="bold" className="text-[#636366]" />
+          <Image size={16} className="text-[#a1a1aa]" />
         )}
       </div>
 
@@ -123,11 +138,12 @@ export function LayerItem({
             e.stopPropagation();
           }}
           onClick={(e) => e.stopPropagation()}
-          className="flex-1 text-xs bg-[#111] border border-[#0a84ff] rounded px-1 py-px focus:outline-hidden text-[#ebebf5]"
+          aria-label="Layer name"
+          className="flex-1 min-w-0 text-xs bg-[#252528] border border-[#0a84ff] rounded px-1 py-px focus:outline-hidden text-[#ebebf5]"
         />
       ) : (
         <span
-          className="flex-1 text-xs truncate"
+          className="layer-name flex-1 text-xs truncate"
           onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
           title="Double-click to rename"
         >
@@ -135,20 +151,21 @@ export function LayerItem({
         </span>
       )}
 
-      <div className={`flex items-center gap-0.5 transition-opacity ${isSelected ? 'opacity-80' : 'opacity-0 group-hover:opacity-100'}`}>
+      <div className="layer-actions">
         <button
           onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}
-          className={`p-1 rounded hover:bg-black/20 ${!layer.visible ? 'opacity-40' : ''}`}
-          title="Toggle visibility"
+          aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
+          title={layer.visible ? 'Hide layer' : 'Show layer'}
         >
-          {layer.visible ? <Eye size={14} weight="bold" /> : <EyeSlash size={14} weight="bold" />}
+          {layer.visible ? <Eye size={15} /> : <EyeSlash size={15} />}
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); removeLayer(layer.id); selectLayer(null); }}
-          className="p-1 rounded hover:bg-red-500/20 text-red-400"
+          className="layer-remove"
+          aria-label={`Remove ${layer.name}`}
           title="Remove layer"
         >
-          <Trash size={14} weight="bold" />
+          <Trash size={15} />
         </button>
       </div>
     </div>
