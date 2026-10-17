@@ -1,38 +1,92 @@
 {
-  "name": "liquid-composer",
-  "type": "module",
-  "version": "2.0.0",
-  "bin": {
-    "liquid-composer": "scripts/agent/cli.mjs"
-  },
-  "engines": {
-    "node": "^20.19.0 || >=22.12.0"
-  },
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "agent": "node scripts/agent/cli.mjs"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
-    "@nanostores/react": "^1.1.0",
-    "@phosphor-icons/react": "^2.1.10",
-    "fflate": "^0.8.3",
-    "nanostores": "^1.5.2",
-    "react": "^19.2.8",
-    "react-colorful": "^5.8.1",
-    "react-dom": "^19.2.8",
-    "zod": "^4.6.5"
-  },
-  "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.5",
-    "@vitejs/plugin-react": "^6.1.1",
-    "playwright-core": "^1.64.0",
-    "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2",
-    "vite": "^8.2.2"
-  }
+    "name": "liquid-composer",
+    "type": "module",
+    "version": "2.0.0",
+    "bin": {
+        "liquid-composer": "scripts/agent/cli.mjs"
+    },
+    "engines": {
+        "node": "^20.19.0 || >=22.12.0"
+    },
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview",
+        "agent": "node scripts/agent/cli.mjs",
+        "build:desktop": "tsc && vite build --base=./",
+        "desktop": "npm run build:desktop && electron .",
+        "desktop:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env ELECTRON_DEV_URL=http://localhost:5173 electron .\"",
+        "dist": "npm run build:desktop && electron-builder",
+        "dist:win": "npm run build:desktop && electron-builder --win",
+        "dist:mac": "npm run build:desktop && electron-builder --mac",
+        "dist:linux": "npm run build:desktop && electron-builder --linux"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.32.1",
+        "@nanostores/react": "^1.1.0",
+        "@phosphor-icons/react": "^2.1.10",
+        "fflate": "^0.8.3",
+        "nanostores": "^1.5.2",
+        "react": "^19.2.8",
+        "react-colorful": "^5.8.1",
+        "react-dom": "^19.2.8",
+        "zod": "^4.6.5"
+    },
+    "devDependencies": {
+        "@tailwindcss/vite": "^4.3.3",
+        "@types/react": "^19.2.18",
+        "@types/react-dom": "^19.2.5",
+        "@vitejs/plugin-react": "^6.1.1",
+        "concurrently": "^10.0.6",
+        "cross-env": "^10.1.0",
+        "electron": "^44.7.0",
+        "electron-builder": "^26.15.3",
+        "playwright-core": "^1.64.0",
+        "tailwindcss": "^4.3.3",
+        "typescript": "^7.0.2",
+        "vite": "^8.2.2",
+        "wait-on": "^9.5.1"
+    },
+    "main": "electron/main.cjs",
+    "description": "Liquid Composer: Liquid Glass app icon designer (desktop)",
+    "author": "Liquid Composer",
+    "build": {
+        "appId": "app.liquidcomposer.desktop",
+        "productName": "Liquid Composer",
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "dist/**/*",
+            "electron/**/*",
+            "package.json",
+            "!node_modules"
+        ],
+        "win": {
+            "target": [
+                "nsis",
+                "portable"
+            ],
+            "icon": "public/icon-1024.png"
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true
+        },
+        "mac": {
+            "target": [
+                "dmg"
+            ],
+            "category": "public.app-category.graphics-design",
+            "icon": "public/icon-1024.png"
+        },
+        "linux": {
+            "target": [
+                "AppImage",
+                "deb"
+            ],
+            "category": "Graphics",
+            "icon": "public/icon-1024.png"
+        }
+    }
 }
