@@ -151,6 +151,8 @@ interface UniformCache {
   glass_uParams3: WebGLUniformLocation | null;
   glass_uParams4: WebGLUniformLocation | null;
   glass_uLayerBounds: WebGLUniformLocation | null;
+  glass_uTranslucencyGradient: WebGLUniformLocation | null;
+  glass_uTranslucencyGradient2: WebGLUniformLocation | null;
   glass_uHl: WebGLUniformLocation | null;
   glass_uVcm: WebGLUniformLocation | null;
   glass_uTexelSize: WebGLUniformLocation | null;
@@ -240,6 +242,8 @@ export class LiquidGlassRenderer implements GlassRenderer {
       glass_uParams3:      gl.getUniformLocation(this.glassProg, 'uParams3'),
       glass_uParams4:      gl.getUniformLocation(this.glassProg, 'uParams4'),
       glass_uLayerBounds:  gl.getUniformLocation(this.glassProg, 'uLayerBounds'),
+      glass_uTranslucencyGradient: gl.getUniformLocation(this.glassProg, 'uTranslucencyGradient'),
+      glass_uTranslucencyGradient2: gl.getUniformLocation(this.glassProg, 'uTranslucencyGradient2'),
       glass_uHl:           gl.getUniformLocation(this.glassProg, 'uHl'),
       glass_uVcm:          gl.getUniformLocation(this.glassProg, 'uVcm'),
       glass_uTexelSize:    gl.getUniformLocation(this.glassProg, 'uTexelSize'),
@@ -500,6 +504,9 @@ export class LiquidGlassRenderer implements GlassRenderer {
     gl.uniform4f(u.glass_uParams3, params.frostiness, params.useVCM ? 1 : 0, params.lightingBlurPx, sz / t.sdfSize);
     gl.uniform4f(u.glass_uParams4, shadow ? params.shadowAlpha ?? 0 : 0, shadow ? params.overdrawAlpha ?? 0 : 0, 0, params.clearMask ?? 0);
     gl.uniform4f(u.glass_uLayerBounds, ...params.layerBounds);
+    const gradient = params.translucencyGradient;
+    gl.uniform4f(u.glass_uTranslucencyGradient, (gradient?.angle ?? 90), (gradient?.start ?? 0) / 100, (gradient?.end ?? 100) / 100, (gradient?.startOpacity ?? 100) / 100);
+    gl.uniform4f(u.glass_uTranslucencyGradient2, (gradient?.endOpacity ?? 0) / 100, gradient?.enabled ? 1 : 0, 0, 0);
     gl.uniform4fv(u.glass_uHl, hl);
 
     // ── Blur: glass background of the layer frame (displaced × coverage with refraction, own shadow multiplied), blurred, normalized by the composite ──

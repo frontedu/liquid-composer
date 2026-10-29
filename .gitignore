@@ -42,3 +42,6 @@ pnpm-debug.log*
 coverage/
 -e 
 release/
+
+# Other
+backups/

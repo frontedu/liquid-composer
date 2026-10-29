@@ -27,6 +27,8 @@ uniform vec4 uParams2;             // x=refraction strength (UV, signed), y=heig
 uniform vec4 uParams3;             // x=frostiness, y=useVCM, z=lightingBlurPx, w=sdfScale (px per SDF texel)
 uniform vec4 uParams4;             // x=shadow alpha over the glass background, y=shadow overdraw alpha over the content, w=Clear mask R = w × luma (0 = color)
 uniform vec4 uLayerBounds;         // x0, y0, w, h (UV, y down)
+uniform vec4 uTranslucencyGradient; // angle degrees, start %, end %, start opacity
+uniform vec4 uTranslucencyGradient2; // end opacity, enabled, unused, unused
 uniform vec4 uHl[12];              // [2i]=(height px, inset px, cos spread, bias amount) [2i+1]=(curvature, Lx, Ly, opacity); 0..3 light, 4..5 dark
 uniform vec4 uVcm[2];              // (black, white, saturation, 0): [0] highlight, [1] darklight
 uniform vec2 uTexelSize;           // 1/resolution
@@ -217,13 +219,32 @@ void main() {
   vec3 frostTint = uParams1.w > 0.5f ? vec3(0.08f, 0.08f, 0.12f) : vec3(1.0f);
   bg = mix(bg, frostTint, uParams1.x * uParams3.x);
 
-  // ── 4. Opaque glass in the coverage, content over it with alpha × S(1 − T·t), t from the top of the layer frame ──
-  // float tY   = clamp((uv.y - uLayerBounds.y) / max(uLayerBounds.w, 1e-4), 0.0, 1.0);
-  // float v    = clamp(1.0 - uParams1.y * tY, 0.0, 1.0);
-  float v = 1.0f - clamp(uParams1.y, 0.0f, 1.0f);
-  float A = alpha * v * v * (3.0f - 2.0f * v);
-  float aOut = A + (1.0f - A) * cov;
-  vec3 c = (layerColor.rgb * A + bg * cov * (1.0f - A)) / max(aOut, 1e-4f);
+  // ── 4. Artwork opacity: uniform translucency or a configurable directional gradient. ──
+  float v;
+  if (uTranslucencyGradient2.y > 0.5f) {
+    vec2 local = clamp((uv - uLayerBounds.xy) / max(uLayerBounds.zw, vec2(1e-4)), 0.0, 1.0);
+    vec2 localSize = max(uLayerBounds.zw, vec2(1e-4));
+    vec2 localPx = local * localSize;
+    float angle = radians(uTranslucencyGradient.x);
+    vec2 direction = vec2(cos(angle), sin(angle));
+    float extent = max(abs(direction.x) * localSize.x + abs(direction.y) * localSize.y, 1e-4);
+    float projected = clamp(dot(localPx - localSize * 0.5, direction) / (0.5 * extent) * 0.5 + 0.5, 0.0, 1.0);
+    float start = clamp(uTranslucencyGradient.y, 0.0, 1.0);
+    float end = clamp(uTranslucencyGradient.z, start + 1e-4, 1.0);
+    float t = smoothstep(0.0, 1.0, clamp((projected - start) / max(end - start, 1e-4), 0.0, 1.0));
+    v = mix(clamp(uTranslucencyGradient.w, 0.0, 1.0), clamp(uTranslucencyGradient2.x, 0.0, 1.0), t);
+  } else {
+    v = 1.0f - clamp(uParams1.y, 0.0f, 1.0f);
+    v = v * v * (3.0f - 2.0f * v);
+  }
+  // Composite the artwork against the sampled underlying layers using its
+  // opacity field. The glass pass already has the real backdrop available in
+  // `bg`; treating this as ordinary source-over alpha caused the backdrop to
+  // be blended a second time and made translucency read like a color fade.
+  // Keep silhouette coverage only for antialiased edges, and mix the actual
+  // artwork color with the sampled backdrop according to the opacity value.
+  float aOut = cov;
+  vec3 c = mix(bg, layerColor.rgb, clamp(v, 0.0f, 1.0f));
   c *= mix(vec3(1.0f), shadow.rgb, shadow.a * uParams4.y * alpha);
 
   // ── 5. Highlights and darklights, one VCM pass each ──────────────────────

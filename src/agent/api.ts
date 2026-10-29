@@ -115,6 +115,7 @@ function mergeGlass(base: LiquidGlassConfig, patch: GlassPatch): LiquidGlassConf
     ...patch,
     blur: { ...base.blur, ...patch.blur },
     translucency: { ...base.translucency, ...patch.translucency },
+    translucencyGradient: patch.translucencyGradient ? { ...base.translucencyGradient, ...patch.translucencyGradient } as NonNullable<LiquidGlassConfig['translucencyGradient']> : base.translucencyGradient,
     shadow: { ...base.shadow, ...patch.shadow },
     effects: patch.effects ? { ...base.effects, ...(patch.effects as Partial<LayerEffects>) } : base.effects,
   };

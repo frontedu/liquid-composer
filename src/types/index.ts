@@ -61,6 +61,7 @@ export interface LiquidGlassConfig {
   specular: boolean | 'inside' | 'outside'; // true = automatic
   blur: { enabled: boolean; value: number };
   translucency: { enabled: boolean; value: number };
+  translucencyGradient?: { enabled: boolean; angle: number; start: number; end: number; startOpacity: number; endOpacity: number };
   dark: { enabled: boolean; value: number };
   mono: { enabled: boolean; value: number };
   shadow: {
