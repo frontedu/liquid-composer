@@ -34,14 +34,14 @@ const ADVANCED_RESET: Partial<LayerEffects> = { keyHighlight: 100, fillHighlight
 const toHeight = (bevel: number) => Math.round(Math.min(100, Math.max(0, (bevel * 1024 / 100 - MATERIAL.heightMin) / MATERIAL.heightRange * 100)) * 10) / 10;
 const toBevel = (height: number) => (MATERIAL.heightMin + MATERIAL.heightRange * height / 100) / 1024 * 100;
 
-function AdjustmentRow({ label, adjustment, onChange, max = 100 }: { label: string; adjustment: Adjustment; onChange: (a: Adjustment) => void; max?: number }) {
+function AdjustmentRow({ label, adjustment, onChange, max = 100, showSlider = true }: { label: string; adjustment: Adjustment; onChange: (a: Adjustment) => void; max?: number; showSlider?: boolean }) {
   return (
     <div className="glass-setting-row">
       <div className="flex items-center justify-between gap-3 min-h-8">
         <span className="text-xs text-[#d1d1d6]">{label}</span>
         <Toggle ariaLabel={label} checked={adjustment.enabled} onChange={(v) => onChange({ ...adjustment, enabled: v })} />
       </div>
-      {adjustment.enabled && (
+      {adjustment.enabled && showSlider && (
         <Slider ariaLabel={label} layout="stacked" value={adjustment.value} onChange={(v) => onChange({ ...adjustment, value: v })} min={0} max={max} />
       )}
     </div>
@@ -64,6 +64,7 @@ export function LiquidGlassSection() {
       : updateLayerLiquidGlass(layer.id, partial);
   const setEffect = (key: keyof LayerEffects, value: number) => update({ effects: { [key]: value } });
   const refractionOn = lg.refraction?.enabled !== false;
+  const gradient = lg.translucencyGradient ?? { enabled: false, angle: 90, start: 0, end: 100, startOpacity: 100, endOpacity: 0 };
   const targets = lg.mode === 'all' ? layers : [layer];
   const canReset = targets.some(({ liquidGlass: glass }) => {
     const effects = { ...DEFAULT_EFFECTS, ...glass.effects };
@@ -125,7 +126,23 @@ export function LiquidGlassSection() {
               )}
             </div>
             <AdjustmentRow label="Blur" adjustment={lg.blur} onChange={(a) => update({ blur: a })} />
-            <AdjustmentRow label="Translucency" adjustment={lg.translucency} onChange={(a) => update({ translucency: a })} />
+            <AdjustmentRow label="Translucency" adjustment={lg.translucency} onChange={(a) => update({ translucency: a, ...(a.enabled ? {} : { translucencyGradient: { ...gradient, enabled: false } }) })} showSlider={!gradient.enabled} />
+            <div className="glass-setting-row">
+              <div className="flex items-center justify-between gap-3 min-h-8">
+                <span className="text-xs text-[#d1d1d6]">Gradient translucency</span>
+                <Toggle ariaLabel="Gradient translucency" checked={gradient.enabled} onChange={(enabled) => update({ translucencyGradient: { ...gradient, enabled } })} />
+              </div>
+              {gradient.enabled && (
+                <div className="space-y-2 pt-2">
+                  <Slider layout="stacked" label={`Angle · ${gradient.angle}°`} value={gradient.angle} onChange={(angle) => update({ translucencyGradient: { ...gradient, angle } })} min={0} max={360} />
+                  <Slider layout="stacked" label={`Start position · ${gradient.start}%`} value={gradient.start} onChange={(start) => update({ translucencyGradient: { ...gradient, start, end: Math.max(start + 1, gradient.end) } })} min={0} max={99} />
+                  <Slider layout="stacked" label={`End position · ${gradient.end}%`} value={gradient.end} onChange={(end) => update({ translucencyGradient: { ...gradient, end } })} min={gradient.start + 1} max={100} />
+                  <Slider layout="stacked" label={`Start opacity · ${gradient.startOpacity}%`} value={gradient.startOpacity} onChange={(startOpacity) => update({ translucencyGradient: { ...gradient, startOpacity } })} min={0} max={100} />
+                  <Slider layout="stacked" label={`End opacity · ${gradient.endOpacity}%`} value={gradient.endOpacity} onChange={(endOpacity) => update({ translucencyGradient: { ...gradient, endOpacity } })} min={0} max={100} />
+                  <p className="text-[10px] leading-4 text-[#8e8e93]">Opacity controls how visible the artwork is at each end of the gradient.</p>
+                </div>
+              )}
+            </div>
             <AdjustmentRow label="Shadow" adjustment={lg.shadow} onChange={(a) => update({ shadow: { ...lg.shadow, ...a } })} max={200} />
           </div>
 

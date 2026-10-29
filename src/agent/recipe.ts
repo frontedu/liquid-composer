@@ -15,7 +15,7 @@ export const GUIDE = `A recipe is a JSON document that fully describes one icon;
 - layers are listed top to bottom (first = frontmost), as in the layer panel. A group is { "type": "group", "layers": [...] }, one level deep.
 - src is inline SVG markup or a data: URL (svg, png, jpeg). The local CLI and MCP also accept a file path. A layer without src is a full squircle painted with its fill.
 - layout.x and layout.y move the layer in % of the icon size from the center (+x right, +y down); layout.scale is % of the icon size (100 = the longer side spans the icon). An image starts at its natural size on the 1024 pt canvas, as in Icon Composer: 1024 (SVG width/height or viewBox, PNG or JPEG pixels) is 100, 512 is 50, 2048 is 200; when the size cannot be read, SVG starts at 80 and PNG or JPEG at 100. New layers start with glass on for every image type, refraction off, translucency 50 and blur off.
-- liquidGlass: specular false = Off, true = Automatic, or "inside" / "outside"; refraction.enabled, with Strength in effects.refraction (-100..100) and Height in effects.bevel (% of the icon size: 1.25 at Height 0 %, 25 at Height 100 %); blur and translucency { enabled, value 0..100 }; shadow { enabled, value 0..200 } is a soft black halo cast below the edges of the artwork and shows through translucent glass; aberration is Dispersion. Other effects keys are the Advanced panel.
+- liquidGlass: specular false = Off, true = Automatic, or "inside" / "outside"; refraction.enabled, with Strength in effects.refraction (-100..100) and Height in effects.bevel (% of the icon size: 1.25 at Height 0 %, 25 at Height 100 %); blur and translucency { enabled, value 0..100 }; translucencyGradient { enabled, angle 0..360, start/end 0..100, startOpacity/endOpacity 0..100 } enables directional artwork opacity; shadow { enabled, value 0..200 } is a soft black halo cast below the edges of the artwork and shows through translucent glass; aberration is Dispersion. Other effects keys are the Advanced panel.
 - fill recolors the artwork: none, solid { color } or gradient { stops } (top to bottom, #rrggbb).
 - background is { hue 0..360, tint 0..100, brightness 0..100 } or { colors: [top, bottom] }.
 - appearance is default, dark, clear or clearDark. clear and clearDark are Icon Composer's exported Clear Light and Clear Dark: a flat gray plate that each layer lightens by the luminance of its artwork. Light always comes from above.`;
@@ -35,6 +35,14 @@ export const GlassSchema = z.strictObject({
   refraction: z.strictObject({ enabled: z.boolean() }).describe('Strength is effects.refraction, Height is effects.bevel'),
   blur: Toggle.describe('Blur of everything beneath the layer'),
   translucency: Toggle,
+  translucencyGradient: z.strictObject({
+    enabled: z.boolean(),
+    angle: z.number().min(0).max(360),
+    start: z.number().min(0).max(99),
+    end: z.number().min(1).max(100),
+    startOpacity: percent(),
+    endOpacity: percent(),
+  }).describe('Optional directional opacity gradient for the artwork'),
   shadow: z.strictObject({ enabled: z.boolean(), value: z.number().min(0).max(200) }).partial()
     .describe('Soft black halo below the edges of the artwork'),
   aberration: percent().describe('Dispersion'),

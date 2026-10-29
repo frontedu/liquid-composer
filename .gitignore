@@ -40,3 +40,8 @@ pnpm-debug.log*
 
 # Testing
 coverage/
+-e 
+release/
+
+# Other
+backups/

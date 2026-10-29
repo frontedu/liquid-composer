@@ -21,6 +21,7 @@ function defaultLiquidGlass(): LiquidGlassConfig {
     specular: true,
     blur: { enabled: false, value: 50 },
     translucency: { enabled: true, value: 50 },
+    translucencyGradient: { enabled: false, angle: 90, start: 0, end: 100, startOpacity: 100, endOpacity: 0 },
     dark: { enabled: false, value: 20 },
     mono: { enabled: false, value: 0 },
     shadow: { type: 'neutral', enabled: true, value: 50 },
@@ -166,7 +167,7 @@ export function updateLayer(id: string, updates: Partial<Layer>) {
 }
 
 function mergeLiquidGlass(base: LiquidGlassConfig, lg: Partial<LiquidGlassConfig>): LiquidGlassConfig {
-  return { ...base, ...lg, ...(lg.effects && { effects: { ...base.effects, ...lg.effects } }) };
+  return { ...base, ...lg, ...(lg.effects && { effects: { ...base.effects, ...lg.effects } }), ...(lg.translucencyGradient && { translucencyGradient: { ...base.translucencyGradient, ...lg.translucencyGradient } as NonNullable<LiquidGlassConfig['translucencyGradient']> }) };
 }
 
 export function updateLayerLiquidGlass(id: string, lg: Partial<LiquidGlassConfig>) {

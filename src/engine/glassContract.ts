@@ -67,6 +67,7 @@ export interface LiquidGlassParams {
   blurRadiusPx: number;         // render px, 0 = off
   frostiness: number;           // 0..1
   translucency: number;         // T 0..1
+  translucencyGradient?: { enabled: boolean; angle: number; start: number; end: number; startOpacity: number; endOpacity: number };
   layerBounds: [number, number, number, number]; // x0, y0, w, h in UV, y down
   refractionStrengthPx: number; // signed render px, 0 = off
   refractionHeightPx: number;   // render px
