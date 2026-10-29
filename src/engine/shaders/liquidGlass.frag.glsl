@@ -216,23 +216,31 @@ void main() {
   } else {
     bg = (refr ? sharpBg(uv, dispUV, px) : bgTap(uv)) * mulS;
   }
-  vec3 frostTint = uParams1.w > 0.5f ? vec3(0.08f, 0.08f, 0.12f) : vec3(1.0f);
-  bg = mix(bg, frostTint, uParams1.x * uParams3.x);
+  // vec3 frostTint = uParams1.w > 0.5f ? vec3(0.08f, 0.08f, 0.12f) : vec3(1.0f);
+  // bg = mix(bg, frostTint, uParams1.x * uParams3.x);
+
+  // Blur should soften the sampled background without
+  // automatically applying a dark tint.
+  if(uParams3.x > 0.0f) {
+    float frostAmount = clamp(uParams1.x * uParams3.x, 0.0f, 1.0f);
+    vec3 frostTint = vec3(1.0f);
+    bg = mix(bg, frostTint, frostAmount);
+  }
 
   // ── 4. Artwork opacity: uniform translucency or a configurable directional gradient. ──
   float v;
-  if (uTranslucencyGradient2.y > 0.5f) {
-    vec2 local = clamp((uv - uLayerBounds.xy) / max(uLayerBounds.zw, vec2(1e-4)), 0.0, 1.0);
-    vec2 localSize = max(uLayerBounds.zw, vec2(1e-4));
+  if(uTranslucencyGradient2.y > 0.5f) {
+    vec2 local = clamp((uv - uLayerBounds.xy) / max(uLayerBounds.zw, vec2(1e-4f)), 0.0f, 1.0f);
+    vec2 localSize = max(uLayerBounds.zw, vec2(1e-4f));
     vec2 localPx = local * localSize;
     float angle = radians(uTranslucencyGradient.x);
     vec2 direction = vec2(cos(angle), sin(angle));
-    float extent = max(abs(direction.x) * localSize.x + abs(direction.y) * localSize.y, 1e-4);
-    float projected = clamp(dot(localPx - localSize * 0.5, direction) / (0.5 * extent) * 0.5 + 0.5, 0.0, 1.0);
-    float start = clamp(uTranslucencyGradient.y, 0.0, 1.0);
-    float end = clamp(uTranslucencyGradient.z, start + 1e-4, 1.0);
-    float t = smoothstep(0.0, 1.0, clamp((projected - start) / max(end - start, 1e-4), 0.0, 1.0));
-    v = mix(clamp(uTranslucencyGradient.w, 0.0, 1.0), clamp(uTranslucencyGradient2.x, 0.0, 1.0), t);
+    float extent = max(abs(direction.x) * localSize.x + abs(direction.y) * localSize.y, 1e-4f);
+    float projected = clamp(dot(localPx - localSize * 0.5f, direction) / (0.5f * extent) * 0.5f + 0.5f, 0.0f, 1.0f);
+    float start = clamp(uTranslucencyGradient.y, 0.0f, 1.0f);
+    float end = clamp(uTranslucencyGradient.z, start + 1e-4f, 1.0f);
+    float t = smoothstep(0.0f, 1.0f, clamp((projected - start) / max(end - start, 1e-4f), 0.0f, 1.0f));
+    v = mix(clamp(uTranslucencyGradient.w, 0.0f, 1.0f), clamp(uTranslucencyGradient2.x, 0.0f, 1.0f), t);
   } else {
     v = 1.0f - clamp(uParams1.y, 0.0f, 1.0f);
     v = v * v * (3.0f - 2.0f * v);
