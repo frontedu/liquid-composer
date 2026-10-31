@@ -11,8 +11,8 @@ Liquid Composer is a web recreation of Apple's Icon Composer. Agents drive the s
 
 | You have | Use |
 | --- | --- |
-| A checkout of the repo with `npm install` and `npm run build` | CLI: `npm run -s agent -- apply icon.json --out out/` |
-| The local MCP server (`node scripts/agent/cli.mjs mcp`) | `liquid_schema`, `liquid_apply`, `liquid_update`, `liquid_render`, `liquid_export`, `liquid_import_icon` |
+| Node 20.19+ or 22.12+ and Google Chrome | CLI: `npx -y liquid-composer apply icon.json --out out/` |
+| The local MCP server (`npx -y liquid-composer mcp`) | `liquid_schema`, `liquid_apply`, `liquid_update`, `liquid_render`, `liquid_export`, `liquid_import_icon` |
 | Only the remote MCP server `https://liquid-composer.vercel.app/mcp` | `liquid_validate`, then `liquid_open`, and give the user the link |
 | A browser tab on the app | `await window.liquidComposer.apply(recipe)` and the other methods below |
 
@@ -80,15 +80,14 @@ Outputs: `{ format: "png" | "jpeg", sizes: [16..4096], modes: [...], bare }` wri
 ## CLI
 
 ```sh
-npm run build                                      # once, and after pulling
-npm run -s agent -- apply icon.json --out out/        # writes the recipe outputs
-npm run -s agent -- render icon.json --size 512 --mode dark --out out/
-npm run -s agent -- import App.icon --render 512 --out out/
-npm run -s agent -- validate icon.json                # no browser
-npm run -s agent -- schema
+npx -y liquid-composer apply icon.json --out out/     # writes the recipe outputs
+npx -y liquid-composer render icon.json --size 512 --mode dark --out out/
+npx -y liquid-composer import App.icon --render 512 --out out/
+npx -y liquid-composer validate icon.json             # no browser
+npx -y liquid-composer schema
 ```
 
-Keep `-s`: without it npm prints its own banner on stdout. Every command prints one JSON object: `{ "ok": true, "files": [...], "state": {...}, "warnings": [...], "renderer": {...} }`, or `{ "ok": false, "error": { "code", "message", "issues": [{ "path", "message" }] } }` with exit code 1. Fix the reported `path` and run again.
+Every command prints one JSON object: `{ "ok": true, "files": [...], "state": {...}, "warnings": [...], "renderer": {...} }`, or `{ "ok": false, "error": { "code", "message", "issues": [{ "path", "message" }] } }` with exit code 1. Fix the reported `path` and run again. In a checkout of the repo, run `npm run build` once (and after pulling) and use `npm run -s agent --` in place of `npx -y liquid-composer`; keep `-s`, without it npm prints its own banner on stdout.
 
 Options: `--out <dir>`, `--target dist | dev | <url>` (default `dist`), `--gpu` (GPU instead of SwiftShader), `--allow-fallback` (accept the Canvas 2D fallback; without it the command fails when WebGL2 is unavailable).
 

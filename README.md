@@ -63,17 +63,16 @@ npm run build    # production build in dist/
 Agents drive the same app and engine as the editor. An icon is a JSON recipe: background, layers top to bottom, glass settings and outputs. Applying a recipe replaces the document, and renders come from the WebGL2 engine in headless Chrome.
 
 ```sh
-npm run build
-npm run -s agent -- apply icon.json --out out/       # PNG, all-appearances zip or .icon, as the recipe asks
-npm run -s agent -- render icon.json --size 512 --mode dark
-npm run -s agent -- import App.icon --render 512
-npm run -s agent -- validate icon.json
-npm run -s agent -- schema
+npx liquid-composer apply icon.json --out out/       # PNG, all-appearances zip or .icon, as the recipe asks
+npx liquid-composer render icon.json --size 512 --mode dark
+npx liquid-composer import App.icon --render 512
+npx liquid-composer validate icon.json
+npx liquid-composer schema
 ```
 
-Each command prints one JSON object with the written files, the document state and any warnings. Rendering uses your installed Google Chrome through playwright-core, on SwiftShader by default; pass `--gpu` to use the GPU.
+Each command prints one JSON object with the written files, the document state and any warnings. Rendering uses your installed Google Chrome through playwright-core, on SwiftShader by default; pass `--gpu` to use the GPU. In a checkout, run `npm run build` once and use `npm run -s agent --` in place of `npx liquid-composer`.
 
-- **MCP server, local.** `node scripts/agent/cli.mjs mcp` provides `liquid_apply`, `liquid_update`, `liquid_render`, `liquid_export`, `liquid_import_icon`, `liquid_state` and `liquid_schema`, and returns previews as images. With Claude Code: `claude mcp add liquid-composer -- node /path/to/liquid-composer/scripts/agent/cli.mjs mcp`
+- **MCP server, local.** `npx -y liquid-composer mcp` provides `liquid_apply`, `liquid_update`, `liquid_render`, `liquid_export`, `liquid_import_icon`, `liquid_state` and `liquid_schema`, and returns previews as images. With Claude Code: `claude mcp add liquid-composer -- npx -y liquid-composer mcp`
 - **MCP server, remote.** `https://liquid-composer.vercel.app/mcp` checks recipes and returns a link that opens the icon in your browser. The recipe travels in the URL fragment, so it never reaches the server. This server does not render
 - **Skill.** `npx skills add frontedu/liquid-composer` teaches agents the recipe format and the workflow
 - **In the browser.** Every build exposes `window.liquidComposer` (`apply`, `update`, `render`, `export`, `state`, `schema`). Add `?agent` to the URL to turn autosave off

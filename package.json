@@ -2,9 +2,32 @@
   "name": "liquid-composer",
   "type": "module",
   "version": "2.0.0",
+  "description": "Liquid Glass app icons from a JSON recipe: CLI and MCP server for Liquid Composer, a web recreation of Apple's Icon Composer",
+  "keywords": [
+    "liquid-glass",
+    "icon-composer",
+    "app-icon",
+    "icon",
+    "ios",
+    "cli",
+    "mcp",
+    "webgl"
+  ],
+  "homepage": "https://liquid-composer.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frontedu/liquid-composer.git"
+  },
+  "license": "MIT",
+  "author": "Eddu",
   "bin": {
     "liquid-composer": "scripts/agent/cli.mjs"
   },
+  "files": [
+    "dist",
+    "scripts/agent",
+    "src/agent/recipe.ts"
+  ],
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
@@ -12,27 +35,28 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "agent": "node scripts/agent/cli.mjs"
+    "agent": "node scripts/agent/cli.mjs",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@nanostores/react": "^1.1.0",
-    "@phosphor-icons/react": "^2.1.10",
     "fflate": "^0.8.3",
-    "nanostores": "^1.5.2",
-    "react": "^19.2.8",
-    "react-colorful": "^5.8.1",
-    "react-dom": "^19.2.8",
+    "playwright-core": "^1.64.0",
+    "vite": "^8.2.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@nanostores/react": "^1.1.0",
+    "@phosphor-icons/react": "^2.1.10",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.1",
-    "playwright-core": "^1.64.0",
+    "nanostores": "^1.5.2",
+    "react": "^19.2.8",
+    "react-colorful": "^5.8.1",
+    "react-dom": "^19.2.8",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2",
-    "vite": "^8.2.2"
+    "typescript": "^7.0.2"
   }
 }

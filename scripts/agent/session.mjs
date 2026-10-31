@@ -127,7 +127,8 @@ async function startTarget(target, warnings) {
   if (target !== 'dist') throw new AgentError('invalid_input', `--target must be dist, dev or a URL, got "${target}"`);
   const built = await stat(join(REPO, 'dist/index.html')).catch(() => null);
   if (!built) throw new AgentError('no_build', 'dist/ not found: run npm run build first, or pass --target dev');
-  if (await newestMtime(join(REPO, 'src')) > built.mtimeMs) warnings.push('dist/ is older than src/; run npm run build to render with the current code');
+  const checkout = await stat(join(REPO, 'index.html')).catch(() => null);
+  if (checkout && await newestMtime(join(REPO, 'src')) > built.mtimeMs) warnings.push('dist/ is older than src/; run npm run build to render with the current code');
   const server = await vite.preview({ root: REPO, configFile: false, logLevel: 'silent', preview: { host: '127.0.0.1' } });
   return { url: server.resolvedUrls.local[0], close: () => server.close() };
 }
