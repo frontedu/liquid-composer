@@ -31,7 +31,13 @@ export async function startMcp(options) {
     ...(preview ? [image(await s.call('render', { size: 512 }))] : []),
   ];
 
-  const server = new McpServer({ name: 'liquid-composer', version: String(API_VERSION) }, {
+  const server = new McpServer({
+    name: 'liquid-composer',
+    title: 'Liquid Composer',
+    version: String(API_VERSION),
+    websiteUrl: 'https://liquid-composer.vercel.app',
+    icons: [{ src: 'https://liquid-composer.vercel.app/icon-512.png', mimeType: 'image/png', sizes: ['512x512'] }],
+  }, {
     instructions: `Liquid Composer renders Liquid Glass app icons (iOS 27, Icon Composer 2) in headless Chrome. Call liquid_schema once, build the icon with liquid_apply, look at the preview, refine with liquid_update or another liquid_apply, then write files with liquid_export.\n\n${GUIDE}`,
   });
 

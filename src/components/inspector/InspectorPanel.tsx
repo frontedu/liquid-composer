@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@nanostores/react';
+import { PencilSimple } from '@phosphor-icons/react';
 import { $selectedLayerId, $appearanceMode, CANVAS_SELECTION_ID } from '../../store/uiStore';
 import { $layers, updateLayer } from '../../store/iconStore';
 import { ColorSection } from './ColorSection';
@@ -7,7 +9,7 @@ import { CompositionSection } from './CompositionSection';
 import { BackgroundControls } from './BackgroundControls';
 import { Slider } from '../ui/Slider';
 import { Select } from '../ui/Select';
-import type { BlendMode } from '../../types/index';
+import type { BlendMode, Layer } from '../../types/index';
 
 const BLEND_MODES: { value: BlendMode; label: string }[] = [
   { value: 'normal', label: 'Normal' },
@@ -68,6 +70,75 @@ function GroupColorSection() {
   );
 }
 
+function LayerNameField({ layer }: { layer: Layer }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const refocusRef = useRef(false);
+  const kind = layer.type === 'group' ? 'Group' : 'Layer';
+
+  useEffect(() => {
+    if (editing || !refocusRef.current) return;
+    refocusRef.current = false;
+    buttonRef.current?.focus();
+  }, [editing]);
+
+  const edit = () => {
+    setValue(layer.name);
+    setEditing(true);
+  };
+
+  const finish = (save: boolean, refocus: boolean) => {
+    const trimmed = value.trim();
+    if (save && trimmed && trimmed !== layer.name) updateLayer(layer.id, { name: trimmed });
+    refocusRef.current = refocus;
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type="text"
+        aria-label={`${kind} name`}
+        value={value}
+        title={layer.sourceFile}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => finish(true, false)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            finish(true, true);
+          }
+          if (e.key === 'Escape') finish(false, true);
+          e.stopPropagation();
+        }}
+        className="inspector-title-input"
+      />
+    );
+  }
+
+  return (
+    <button
+      ref={buttonRef}
+      type="button"
+      aria-label={`Rename ${kind.toLowerCase()} ${layer.name}`}
+      title="Rename"
+      onClick={edit}
+      onKeyDown={(e) => {
+        if (e.key !== 'F2') return;
+        e.preventDefault();
+        edit();
+      }}
+      className="inspector-title"
+    >
+      <span className="truncate">{layer.name}</span>
+      <PencilSimple size={12} weight="bold" aria-hidden="true" />
+    </button>
+  );
+}
+
 export function InspectorPanel() {
   const selectedId = useStore($selectedLayerId);
   const appearanceMode = useStore($appearanceMode);
@@ -78,9 +149,11 @@ export function InspectorPanel() {
   return (
     <aside aria-label="Inspector" className="inspector-panel w-[280px] shrink-0 min-h-0 flex flex-col">
       <div className="editor-panel-header">
-        <span className="font-semibold truncate" title={layer?.name}>
-          {isCanvas ? 'Canvas' : layer ? layer.name : 'Inspector'}
-        </span>
+        {layer && !isCanvas ? (
+          <LayerNameField key={layer.id} layer={layer} />
+        ) : (
+          <span className="font-semibold truncate">{isCanvas ? 'Canvas' : 'Inspector'}</span>
+        )}
       </div>
 
       {isCanvas ? (
@@ -99,16 +172,13 @@ export function InspectorPanel() {
         </div>
       ) : (
         <div key={layer.id} className="flex-1 min-h-0 overflow-y-auto">
+          <CompositionSection />
           {layer.type === 'group' ? (
-            <>
-              <GroupColorSection />
-              <CompositionSection />
-            </>
+            <GroupColorSection />
           ) : (
             <>
               <ColorSection />
               <LiquidGlassSection />
-              <CompositionSection />
             </>
           )}
         </div>

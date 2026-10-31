@@ -2,6 +2,8 @@ import { useRef, useState, useEffect } from 'react';
 import { useStore } from '@nanostores/react';
 import {
   $layers,
+  $iconName,
+  $background,
   addLayer,
   addGroup,
   removeLayer,
@@ -18,14 +20,15 @@ import {
   undo,
   redo,
 } from '../../store/iconStore';
-import { $persistenceEnabled, $selectedLayerId, $showGrid, selectLayer, CANVAS_SELECTION_ID } from '../../store/uiStore';
+import { $persistenceEnabled, $selectedLayerId, $showGrid, selectLayer, inspectLayer, CANVAS_SELECTION_ID } from '../../store/uiStore';
 import { clearPersistence } from '../../store/persistence';
+import { downloadIconDocument } from '../../engine/IconDocument';
 import { $fileDropZone, addImageFiles, imageFiles } from '../useFileDrop';
 import { LayerItem } from './LayerItem';
 import { useLayerDrag, LAYER_INDENT } from './useLayerDrag';
 import { Toggle } from '../ui/Toggle';
 import type { Layer } from '../../types/index';
-import { Plus, ArrowCounterClockwise, FolderSimplePlus, Square } from '@phosphor-icons/react';
+import { Plus, ArrowCounterClockwise, DownloadSimple, FolderSimplePlus, GearSix, Square } from '@phosphor-icons/react';
 
 type ItemRow = { kind: 'item'; layer: Layer; depth: number };
 type EmptyGroupRow = { kind: 'empty-group'; groupId: string };
@@ -85,7 +88,7 @@ function SettingsDropdown() {
 
   useEffect(() => {
     if (!open) return;
-    menuRef.current?.querySelector<HTMLButtonElement>('.editor-menu-danger')?.focus();
+    menuRef.current?.querySelector<HTMLButtonElement>('.editor-menu-item')?.focus();
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
     };
@@ -107,22 +110,45 @@ function SettingsDropdown() {
     <div className="relative" ref={menuRef} onBlur={(e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setOpen(false); }}>
       <button
         onClick={() => setOpen((v) => !v)}
-        title="Reset and auto-save"
-        aria-label="Reset and auto-save"
+        title="Document settings"
+        aria-label="Document settings"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="save-settings-popover"
         className="editor-icon-button"
       >
-        <ArrowCounterClockwise size={16} />
+        <GearSix size={16} />
       </button>
       {open && (
         <div
           id="save-settings-popover"
           role="dialog"
-          aria-label="Reset and auto-save"
+          aria-label="Document settings"
           className="editor-popover editor-settings-popover"
         >
+          <button
+            onClick={() => {
+              setOpen(false);
+              menuRef.current?.querySelector<HTMLButtonElement>('[aria-haspopup]')?.focus();
+              downloadIconDocument($iconName.get(), $layers.get(), $background.get()).catch(console.error);
+            }}
+            className="editor-menu-item group"
+          >
+            <DownloadSimple size={14} weight="bold" />
+            <span>
+              Export .icon
+              <span className="block whitespace-normal text-2xs text-[#8e8e93] group-hover:text-white/85 group-focus-visible:text-white/85">Reopen in Liquid Composer or Xcode</span>
+            </span>
+          </button>
+          <div className="mx-2 my-1" style={{ height: '0.5px', background: 'rgba(255,255,255,0.08)' }} />
+          <div className="flex items-center justify-between gap-3 px-2 py-[5px]">
+            <span className="text-xs text-[#d1d1d6]">
+              Auto-save
+              <span className="block text-2xs text-[#8e8e93]">Keep this icon after reload</span>
+            </span>
+            <Toggle ariaLabel="Auto-save" checked={persistenceEnabled} onChange={(v) => $persistenceEnabled.set(v)} />
+          </div>
+          <div className="mx-2 my-1" style={{ height: '0.5px', background: 'rgba(255,255,255,0.08)' }} />
           <button
             onClick={() => {
               if (window.confirm('Reset the document and all saved data? This action cannot be undone.')) {
@@ -135,14 +161,6 @@ function SettingsDropdown() {
             <ArrowCounterClockwise size={14} weight="bold" />
             Reset Document…
           </button>
-          <div className="mx-2 my-1" style={{ height: '0.5px', background: 'rgba(255,255,255,0.08)' }} />
-          <div className="flex items-center justify-between gap-3 px-2 py-[5px]">
-            <span className="text-xs text-[#d1d1d6]">
-              Auto-save
-              <span className="block text-2xs text-[#8e8e93]">Keep this icon after reload</span>
-            </span>
-            <Toggle ariaLabel="Auto-save" checked={persistenceEnabled} onChange={(v) => $persistenceEnabled.set(v)} />
-          </div>
         </div>
       )}
     </div>
@@ -315,7 +333,7 @@ export function LayerTree() {
         type="button"
         draggable={false}
         aria-pressed={selectedId === CANVAS_SELECTION_ID}
-        onClick={() => selectLayer(CANVAS_SELECTION_ID)}
+        onClick={() => inspectLayer(CANVAS_SELECTION_ID)}
         className="layer-canvas-button"
       >
         <Square size={18} aria-hidden="true" />

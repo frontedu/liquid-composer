@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@nanostores/react';
 import { CaretDown, Check, Sun, MagnifyingGlass, DownloadSimple } from '@phosphor-icons/react';
 import type { ExportOptions } from '../../engine/IconRenderer';
-import { exportIconDocument, importIconDocument, safeName } from '../../engine/IconDocument';
+import { downloadIconDocument, importIconDocument } from '../../engine/IconDocument';
 import { BackgroundControls } from '../inspector/BackgroundControls';
 import {
   $iconName, $iconModified, $background, $layers,
@@ -99,18 +99,10 @@ export function TopToolbar() {
   };
 
   // ── Icon Composer document (.icon) ──
-  const exportIconFile = async () => {
+  const exportIconFile = () => {
     setOpenPopover(null);
     exportMenuRef.current?.querySelector('button')?.focus();
-    const blob = await exportIconDocument($iconName.get(), $layers.get(), $background.get())
-      .catch((err: unknown) => { console.error(err); return null; });
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${safeName($iconName.get())}.icon.zip`;
-    a.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadIconDocument($iconName.get(), $layers.get(), $background.get()).catch(console.error);
   };
 
   const openIconFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -236,7 +228,7 @@ export function TopToolbar() {
       </div>
 
       <div className="editor-toolbar-tools">
-        <div ref={bgPickerRef} className="relative">
+        <div ref={bgPickerRef} className="editor-background relative">
           <button
             onClick={() => togglePopover('background')}
             className="editor-tool-button"
@@ -246,7 +238,7 @@ export function TopToolbar() {
             aria-controls="background-popover"
           >
             <span className="editor-color-swatch" style={{ background: bgPreview }} />
-            <span>Background</span>
+            <span className="editor-tool-label">Background</span>
             <CaretDown size={10} weight="bold" className="editor-chevron" />
           </button>
           {openPopover === 'background' && (

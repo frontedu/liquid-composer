@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Privacy Policy · Liquid Composer</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      body { margin: 0; background: #171719; color: #f5f5f7; font: 15px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+      main { max-width: 680px; margin: 0 auto; padding: 48px 24px 72px; }
+      h1 { font-size: 28px; line-height: 1.2; margin: 24px 0 4px; }
+      h2 { font-size: 17px; margin: 32px 0 8px; }
+      p, li { color: #c7c7cc; }
+      ul { padding-left: 20px; }
+      a { color: #0a84ff; }
+      .updated { color: #8e8e93; margin: 0 0 24px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a href="/">Liquid Composer</a>
+      <h1>Privacy Policy</h1>
+      <p class="updated">Last updated October 31, 2026</p>
+      <p>Liquid Composer is an independent project by Eddu. It has no accounts, cookies or ads, and it does not sell or share personal data. This policy covers the web editor at liquid-composer.vercel.app, its MCP server at liquid-composer.vercel.app/mcp and the liquid-composer command-line tool on npm.</p>
+
+      <h2>The web editor</h2>
+      <ul>
+        <li>The editor runs in your browser. Your artwork, layers and settings are kept in your browser's storage (localStorage and IndexedDB) so your work survives a reload. They are never uploaded to us.</li>
+        <li>Exports (PNG, JPEG, ZIP and .icon) are created in your browser and saved straight to your device.</li>
+        <li>The editor keeps a copy of its own files in your browser so it can open offline, including when installed as an app. This copy holds no personal data.</li>
+        <li>Reset Document deletes the saved icon, and turning off Auto-save stops saving it until you reload. Clearing this site's data in your browser removes everything, including recent colors.</li>
+        <li>Links that open an icon carry its recipe after the # in the address. Browsers don't send that part to the server.</li>
+      </ul>
+
+      <h2>Analytics</h2>
+      <p>The editor counts visits with Vercel Web Analytics, which uses no cookies and doesn't identify you. Each page view records the page address without the part after #, the referring site, an approximate location (country, region and city), and the browser, operating system and device type. Visitors are told apart by a hash of the request that is discarded after 24 hours. Pages opened by AI agents (with ?agent in the address), the MCP server and the command-line tool send no analytics.</p>
+
+      <h2>The MCP server</h2>
+      <p>When an AI assistant such as Claude uses the Liquid Composer connector, it sends the server the arguments of each tool call: an icon recipe with layer names, colors, glass settings and artwork as inline SVG or image data. The server checks the recipe or turns it into a link and sends the result back. Recipes are handled in memory and discarded once the response is sent. The server never receives your conversation, only the tool arguments, and it requires no sign-in.</p>
+
+      <h2>The command-line tool</h2>
+      <p>The liquid-composer npm package runs on your computer and renders icons with your own copy of Google Chrome. Recipes, artwork and renders stay on your machine and are never sent to us.</p>
+
+      <h2>Sharing and service providers</h2>
+      <p>We don't sell, rent or share personal data. The editor and the MCP server are hosted on Vercel, which also provides the analytics and, like any web host, processes technical data about each request, such as IP address, browser and time, to deliver and protect the service, as described in <a href="https://vercel.com/legal/privacy-policy">Vercel's privacy policy</a>. The command-line tool is downloaded from the npm registry, which has its own privacy policy.</p>
+
+      <h2>Retention</h2>
+      <ul>
+        <li>Recipes sent to the MCP server are not kept.</li>
+        <li>Data in your browser stays until you delete it.</li>
+        <li>Analytics are kept by Vercel in aggregate, for the reporting window of the project's plan.</li>
+        <li>Request records at Vercel follow Vercel's retention rules and are used only to run the service.</li>
+      </ul>
+
+      <h2>Changes</h2>
+      <p>If this policy changes, the new version will be posted on this page with a new date.</p>
+
+      <h2>Contact</h2>
+      <p>Questions or requests: open an issue at <a href="https://github.com/frontedu/liquid-composer/issues">github.com/frontedu/liquid-composer</a>.</p>
+    </main>
+  </body>
+</html>

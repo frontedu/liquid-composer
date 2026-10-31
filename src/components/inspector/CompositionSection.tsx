@@ -1,4 +1,3 @@
-import { useEffect, useState, useId } from 'react';
 import { useStore } from '@nanostores/react';
 import { $layers, updateLayer } from '../../store/iconStore';
 import { $selectedLayerId } from '../../store/uiStore';
@@ -7,23 +6,11 @@ import { Toggle } from '../ui/Toggle';
 import { Slider } from '../ui/Slider';
 
 export function CompositionSection() {
-  const nameId = useId();
   const selectedId = useStore($selectedLayerId);
   const layers = useStore($layers);
   const layer = layers.find((l) => l.id === selectedId);
-  const [nameValue, setNameValue] = useState(layer?.name ?? '');
-
-  useEffect(() => {
-    if (layer) setNameValue(layer.name);
-  }, [layer?.name]);
 
   if (!layer) return null;
-
-  const commitName = () => {
-    const trimmed = nameValue.trim();
-    if (trimmed && trimmed !== layer.name) updateLayer(layer.id, { name: trimmed });
-    else setNameValue(layer.name);
-  };
 
   const { layout, visible } = layer;
   const isGroup = layer.type === 'group';
@@ -39,24 +26,6 @@ export function CompositionSection() {
         <div className="flex items-center justify-between">
           <span className="text-xs text-[#636366]">Visible</span>
           <Toggle ariaLabel="Layer visibility" checked={visible} onChange={(v) => updateLayer(layer.id, { visible: v })} />
-        </div>
-
-        <div className="space-y-2">
-          <label htmlFor={nameId} className="text-xs text-[#a1a1aa]">Name</label>
-          <input
-            id={nameId}
-            type="text"
-            value={nameValue}
-            title={layer.sourceFile}
-            onChange={(e) => setNameValue(e.target.value)}
-            onBlur={commitName}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur();
-              if (e.key === 'Escape') setNameValue(layer.name);
-              e.stopPropagation();
-            }}
-            className="w-full min-w-0 text-xs text-[#ebebf5] bg-white/[0.06] px-2 py-1 rounded border border-white/[0.08] focus:outline-hidden focus:border-[#0a84ff]"
-          />
         </div>
 
         {!isGroup && (

@@ -17,6 +17,10 @@ export const LIGHT_ANGLE_LABELS: Record<number, string> = {
   '135': 'Top Left',
 };
 
+export const MOBILE_QUERY = '(max-width: 767px)';
+export type MobilePane = 'canvas' | 'layers' | 'inspector';
+export const $mobilePane = atom<MobilePane>('canvas');
+
 export const CANVAS_SELECTION_ID = '__canvas__';
 export const $selectedLayerId = atom<string | null>(null);
 export const $hoveredLayerId = atom<string | null>(null);
@@ -37,6 +41,16 @@ export const $webgl2Restores = atom<number>(0);
 
 export function selectLayer(id: string | null) {
   $selectedLayerId.set(id);
+}
+
+export function setMobilePane(pane: MobilePane) {
+  $hoveredLayerId.set(null);
+  $mobilePane.set(pane);
+}
+
+export function inspectLayer(id: string) {
+  selectLayer(id);
+  if (window.matchMedia(MOBILE_QUERY).matches) setMobilePane('inspector');
 }
 
 export function setAppearanceMode(mode: AppearanceMode) {

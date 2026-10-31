@@ -26,8 +26,17 @@ export function imageFiles(files: Iterable<File>): File[] {
   return out;
 }
 
+const NATURAL_MIN = 25; // % of the icon
+const GRID_SCALE = 80; // % of the icon
+
+const importScale = (natural: number | undefined, svg: boolean) =>
+  natural === undefined ? undefined : natural > 100 ? 100 : svg && natural < NATURAL_MIN ? GRID_SCALE : natural;
+
 export async function addImageFiles(files: File[]) {
-  const scales = await Promise.all(files.map((f) => naturalScale(f, f.type === 'image/svg+xml')));
+  const scales = await Promise.all(files.map(async (f) => {
+    const svg = f.type === 'image/svg+xml';
+    return importScale(await naturalScale(f, svg), svg);
+  }));
   files.forEach((file, i) => addLayer(URL.createObjectURL(file), file.name, null, scales[i]));
 }
 

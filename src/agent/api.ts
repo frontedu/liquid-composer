@@ -68,7 +68,8 @@ async function loadSource(src: string, path: string): Promise<Source> {
     URL.revokeObjectURL(url);
     throw fail('the image could not be decoded');
   }
-  return { url, ext, scale: await naturalScale(blob, ext === 'svg') };
+  const scale = await naturalScale(blob, ext === 'svg');
+  return { url, ext, scale: scale === undefined ? undefined : Math.min(400, Math.max(1, scale)) };
 }
 
 async function prepare(entries: Entry[], taken: Set<string>) {

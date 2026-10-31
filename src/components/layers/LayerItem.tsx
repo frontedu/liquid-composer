@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '@nanostores/react';
-import { $selectedLayerId, $hoveredLayerId, selectLayer } from '../../store/uiStore';
+import { $selectedLayerId, $hoveredLayerId, selectLayer, inspectLayer } from '../../store/uiStore';
 import {
   $layers,
   removeLayer,
@@ -107,7 +107,7 @@ export function LayerItem({
       onPointerDown={(e) => { if (!editing) onPointerDown?.(e, layer.id); }}
       onMouseEnter={() => $hoveredLayerId.set(layer.id)}
       onMouseLeave={() => $hoveredLayerId.set(null)}
-      onClick={() => !editing && selectLayer(layer.id)}
+      onClick={() => !editing && inspectLayer(layer.id)}
       onContextMenu={(e) => {
         if (editing) return;
         e.preventDefault();

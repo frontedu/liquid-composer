@@ -1,7 +1,7 @@
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useCallback, useState } from 'react';
 import { useStore } from '@nanostores/react';
 import { $layers, $background, updateLayer, setHistoryGesture } from '../../store/iconStore';
-import { $appearanceMode, $lightAngle, $zoom, $selectedLayerId, $hoveredLayerId, $webgl2Status, $webgl2Error, $webgl2Restores, $showGrid, $gridStyle, selectLayer, stepZoom } from '../../store/uiStore';
+import { $appearanceMode, $lightAngle, $zoom, $selectedLayerId, $hoveredLayerId, $webgl2Status, $webgl2Error, $webgl2Restores, $showGrid, $gridStyle, $mobilePane, selectLayer, inspectLayer, stepZoom, MOBILE_QUERY } from '../../store/uiStore';
 import { renderIconToCanvas, exportIcon, exportZip, type ExportOptions } from '../../engine/IconRenderer';
 import { drawSquirclePath } from '../../engine/ImageProcessor';
 import { CHICLET_SHADOW } from '../../engine/glassContract';
@@ -11,6 +11,10 @@ import { GridFour, CircleHalf } from '@phosphor-icons/react';
 import type { Layer } from '../../types/index';
 
 const ICON_BASE_SIZE = 750; // px at 100% zoom
+const MOBILE_ICON_MARGIN_X = 16; // px per side
+const MOBILE_ICON_MARGIN_Y = 76; // px per side
+const DOUBLE_TAP_MS = 350;
+const DOUBLE_TAP_PX = 24;
 
 function IconShadow({ size }: { size: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -155,7 +159,9 @@ export function IconCanvas() {
   const webgl2Restores = useStore($webgl2Restores);
   const showGrid = useStore($showGrid);
   const gridStyle = useStore($gridStyle);
+  const pane = useStore($mobilePane);
   const [snapGuide, setSnapGuide] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
+  const [fitSize, setFitSize] = useState<number | null>(null);
   const over = useStore($fileDropZone) === 'canvas';
 
   const dragState = useRef<{
@@ -169,18 +175,35 @@ export function IconCanvas() {
     pendingY: number;
     moved?: boolean;
   } | null>(null);
+  const lastTapRef = useRef<{ layerId: string; time: number; x: number; y: number } | null>(null);
+  const inspectRef = useRef<string | null>(null);
 
-  const iconSize = Math.round(ICON_BASE_SIZE * (zoom / 100));
+  const iconSize = fitSize ?? Math.round(ICON_BASE_SIZE * (zoom / 100));
   const dpr = typeof window !== 'undefined' ? Math.max(2, Math.min(window.devicePixelRatio || 1, 3)) : 2;
-  const renderSize = Math.max(1024, Math.min(2048, Math.round(ICON_BASE_SIZE * dpr)));
+  const renderSize = Math.max(1024, Math.min(2048, Math.round((fitSize ?? ICON_BASE_SIZE) * dpr)));
 
+  const workspaceRef  = useRef<HTMLDivElement>(null);
   const outlineImgRef = useRef<HTMLImageElement>(null);
   const renderingRef  = useRef(false);
   const pendingRef    = useRef<(() => void) | null>(null);
 
+  useLayoutEffect(() => {
+    const el = workspaceRef.current;
+    if (!el) return;
+    const mobile = window.matchMedia(MOBILE_QUERY);
+    const measure = () => {
+      if (!mobile.matches) setFitSize(null);
+      else if (el.clientWidth) setFitSize(Math.max(1, Math.min(el.clientWidth - 2 * MOBILE_ICON_MARGIN_X, el.clientHeight - 2 * MOBILE_ICON_MARGIN_Y)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || (window.matchMedia(MOBILE_QUERY).matches && (fitSize === null || pane !== 'canvas'))) return;
 
     const params = { layers, background, lightAngle, appearanceMode: mode, size: renderSize };
 
@@ -202,7 +225,7 @@ export function IconCanvas() {
       pendingRef.current = null;
       run();
     }
-  }, [layers, background, lightAngle, mode, renderSize, webgl2Restores]);
+  }, [layers, background, lightAngle, mode, renderSize, webgl2Restores, fitSize, pane]);
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -251,6 +274,7 @@ export function IconCanvas() {
 
   const handleCanvasPointerDown = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
+    inspectRef.current = null;
     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
     const nx = (e.clientX - rect.left) / iconSize;
     const ny = (e.clientY - rect.top) / iconSize;
@@ -294,6 +318,12 @@ export function IconCanvas() {
     if (hitId) {
       selectLayer(hitId);
       const layer = layers.find((l) => l.id === hitId)!;
+      try {
+        target.setPointerCapture(e.pointerId);
+      } catch {
+        lastTapRef.current = { layerId: hitId, time: e.timeStamp, x: e.clientX, y: e.clientY };
+        return;
+      }
       dragState.current = {
         layerId: hitId,
         startX: e.clientX,
@@ -304,7 +334,6 @@ export function IconCanvas() {
         pendingX: layer.layout.x,
         pendingY: layer.layout.y,
       };
-      target.setPointerCapture(e.pointerId);
     } else {
       selectLayer(null);
     }
@@ -385,7 +414,13 @@ export function IconCanvas() {
     }
   }, [layers, iconSize]);
 
-  const handleCanvasPointerUp = useCallback(() => {
+  const handleCanvasPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const ds = dragState.current;
+    const last = lastTapRef.current;
+    const tap = e.type === 'pointerup' && ds && !ds.moved ? { layerId: ds.layerId, time: e.timeStamp, x: e.clientX, y: e.clientY } : null;
+    const doubleTap = tap && last && last.layerId === tap.layerId && tap.time - last.time < DOUBLE_TAP_MS && Math.hypot(tap.x - last.x, tap.y - last.y) < DOUBLE_TAP_PX;
+    lastTapRef.current = doubleTap ? null : tap;
+    inspectRef.current = tap && doubleTap ? tap.layerId : null;
     dragState.current = null;
     setSnapGuide({ x: false, y: false });
     setHistoryGesture(false);
@@ -395,10 +430,12 @@ export function IconCanvas() {
 
   return (
     <div
+      ref={workspaceRef}
       className="icon-workspace flex-1 min-w-0 flex items-center justify-center relative overflow-hidden"
       data-file-drop="canvas"
       onPointerDown={(e) => {
         if (e.target === e.currentTarget || !(e.target as HTMLElement).closest('[data-icon-area]')) {
+          (document.activeElement as HTMLElement | null)?.blur();
           selectLayer(null);
         }
       }}
@@ -435,6 +472,11 @@ export function IconCanvas() {
         onPointerDown={handleCanvasPointerDown}
         onPointerMove={handleCanvasPointerMove}
         onPointerUp={handleCanvasPointerUp}
+        onPointerCancel={handleCanvasPointerUp}
+        onClick={() => {
+          if (inspectRef.current) inspectLayer(inspectRef.current);
+          inspectRef.current = null;
+        }}
         onPointerLeave={() => { if (!dragState.current) $hoveredLayerId.set(null); }}
       >
         <IconShadow size={iconSize} />
@@ -508,7 +550,7 @@ export function IconCanvas() {
 
       <div className="canvas-controls" onPointerDown={(e) => e.stopPropagation()}>
         <BottomBar />
-        <div className="appearance-segments" role="group" aria-label="Icon grid">
+        <div className="appearance-segments canvas-grid-toggle" role="group" aria-label="Icon grid">
           <button
             type="button"
             aria-pressed={showGrid}

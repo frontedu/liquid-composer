@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { CaretDown, ArrowCounterClockwise, SlidersHorizontal } from '@phosphor-icons/react';
+import { CaretDown, SlidersHorizontal } from '@phosphor-icons/react';
 import { $layers, updateLayerLiquidGlass, updateAllLayersLiquidGlass } from '../../store/iconStore';
 import { $selectedLayerId, $showAdvancedGlass } from '../../store/uiStore';
 import { DEFAULT_EFFECTS } from '../../engine/IconRenderer';
@@ -8,6 +8,7 @@ import type { LayerEffects } from '../../types/index';
 import { Toggle } from '../ui/Toggle';
 import { Slider } from '../ui/Slider';
 import { Select } from '../ui/Select';
+import { RefractionPad } from './RefractionPad';
 
 type Adjustment = { enabled: boolean; value: number };
 
@@ -117,12 +118,17 @@ export function LiquidGlassSection() {
                 <span className="text-xs text-[#d1d1d6]">Refraction</span>
                 <Toggle ariaLabel="Refraction" checked={refractionOn} onChange={(v) => update({ refraction: { enabled: v } })} />
               </div>
-              {refractionOn && (
-                <>
-                  <Slider layout="stacked" label="Strength" value={fx.refraction} onChange={(v) => setEffect('refraction', v)} min={-100} max={100} />
-                  <Slider layout="stacked" label="Height" value={toHeight(fx.bevel)} onChange={(v) => setEffect('bevel', toBevel(v))} min={0} max={100} />
-                </>
-              )}
+              <RefractionPad
+                strength={fx.refraction}
+                height={toHeight(fx.bevel)}
+                dimmed={!refractionOn}
+                onChange={({ strength, height }) => {
+                  const effects: Partial<LayerEffects> = {};
+                  if (strength !== undefined) effects.refraction = strength;
+                  if (height !== undefined) effects.bevel = toBevel(height);
+                  update({ refraction: { enabled: true }, effects });
+                }}
+              />
             </div>
             <AdjustmentRow label="Blur" adjustment={lg.blur} onChange={(a) => update({ blur: a })} />
             <AdjustmentRow label="Translucency" adjustment={lg.translucency} onChange={(a) => update({ translucency: a })} />
@@ -150,7 +156,7 @@ export function LiquidGlassSection() {
                 title="Reset advanced settings"
                 className="glass-reset"
               >
-                <ArrowCounterClockwise size={14} aria-hidden="true" />
+                Reset
               </button>
             )}
           </div>

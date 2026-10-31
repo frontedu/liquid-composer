@@ -3,30 +3,25 @@ import { useStore } from '@nanostores/react';
 import { $background, updateBackground, bgColorsFromHueTint } from '../../store/iconStore';
 import { ColorPicker } from '../ui/ColorPicker';
 
-function hslToHex(h: number, s: number, l: number): string {
-  const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
+function hsvToHex(h: number, s: number, v: number): string {
   const channel = (n: number) => {
-    const k = (n + h / 30) % 12;
-    return Math.round((l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))) * 255).toString(16).padStart(2, '0');
+    const k = (n + h / 60) % 6;
+    return Math.round((v - v * s * Math.max(0, Math.min(k, 4 - k, 1))) * 255).toString(16).padStart(2, '0');
   };
-  return `#${channel(0)}${channel(8)}${channel(4)}`;
+  return `#${channel(5)}${channel(3)}${channel(1)}`;
 }
 
-function hexToHSL(hex: string): { h: number; s: number; l: number } {
+function hexToHSV(hex: string): { h: number; s: number; v: number } {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;
   const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const l   = (max + min) / 2;
-  const d   = max - min;
-  if (d === 0) return { h: 0, s: 0, l: Math.round(l * 100) };
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const d   = max - Math.min(r, g, b);
   let h = 0;
-  if (max === r)      h = (g - b) / d + (g < b ? 6 : 0);
-  else if (max === g) h = (b - r) / d + 2;
-  else                h = (r - g) / d + 4;
-  return { h: Math.round((h / 6) * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+  if (d && max === r)      h = (g - b) / d + (g < b ? 6 : 0);
+  else if (d && max === g) h = (b - r) / d + 2;
+  else if (d)              h = (r - g) / d + 4;
+  return { h: Math.round(h * 60), s: max ? d / max : 0, v: max };
 }
 
 const PRESET_COLORS = [
@@ -178,14 +173,14 @@ export function BackgroundControls() {
 
   const handleCustomColor = (hex: string) => {
     if (localBgType === 'preset') {
-      const { h, s, l } = hexToHSL(hex);
-      const newTint = Math.round(Math.min(100, Math.max(0, (1 - s / 85) * 100)));
-      const l1base = 48 + newTint * 0.52;
-      const newBrightness = Math.round(Math.min(100, Math.max(0, (l * 100) / l1base)));
-      setLocalHue(h);
+      const { h, s, v } = hexToHSV(hex);
+      const newHue = s ? h : hue;
+      const newTint = v ? Math.round((1 - s) * 100) : tint;
+      const newBrightness = Math.round(v * 100);
+      setLocalHue(newHue);
       setLocalTint(newTint);
       setLocalBrightness(newBrightness);
-      bgValuesRef.current = { ...bgValuesRef.current, type: 'preset', hue: h, tint: newTint, brightness: newBrightness };
+      bgValuesRef.current = { ...bgValuesRef.current, type: 'preset', hue: newHue, tint: newTint, brightness: newBrightness };
     } else {
       const newStops = [...localStops];
       newStops[0] = { ...newStops[0], color: hex };
@@ -259,7 +254,7 @@ export function BackgroundControls() {
         <div className="p-4 space-y-4">
           <ColorPicker
             label="Background color"
-            value={hslToHex(hue, sat, l1cur)}
+            value={hsvToHex(hue, 1 - tint / 100, brightness / 100)}
             onChange={handleCustomColor}
             className="relative group block w-full rounded-[8px]"
           >

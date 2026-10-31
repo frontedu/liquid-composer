@@ -347,6 +347,15 @@ export async function exportIconDocument(name: string, layers: Layer[], backgrou
   return new Blob([zipSync(files)], { type: 'application/zip' });
 }
 
+export async function downloadIconDocument(name: string, layers: Layer[], background: BackgroundConfig) {
+  const url = URL.createObjectURL(await exportIconDocument(name, layers, background));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeName(name)}.icon.zip`;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // ── Import ──
 
 export async function importIconDocument(file: Blob, fileName: string): Promise<IconDocumentData> {

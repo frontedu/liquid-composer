@@ -11,7 +11,7 @@ Liquid Composer is a web recreation of Apple's Icon Composer. Agents drive the s
 
 | You have | Use |
 | --- | --- |
-| Node 20.19+ or 22.12+ and Google Chrome | CLI: `npx -y liquid-composer apply icon.json --out out/` |
+| Node 22.12+ and Google Chrome | CLI: `npx -y liquid-composer apply icon.json --out out/` |
 | The local MCP server (`npx -y liquid-composer mcp`) | `liquid_schema`, `liquid_apply`, `liquid_update`, `liquid_render`, `liquid_export`, `liquid_import_icon` |
 | Only the remote MCP server `https://liquid-composer.vercel.app/mcp` | `liquid_validate`, then `liquid_open`, and give the user the link |
 | A browser tab on the app | `await window.liquidComposer.apply(recipe)` and the other methods below |
@@ -93,7 +93,7 @@ Options: `--out <dir>`, `--target dist | dev | <url>` (default `dist`), `--gpu` 
 
 ## Browser API
 
-`window.liquidComposer` exists in every build of the app. Open it with `?agent` to skip autosave. All methods return the new state or the rendered data and throw an error with `code`, `message` and `issues`.
+`window.liquidComposer` exists in every build of the app. Open it with `?agent` to skip autosave, analytics and the offline cache. All methods return the new state or the rendered data and throw an error with `code`, `message` and `issues`.
 
 | Method | Does |
 | --- | --- |
